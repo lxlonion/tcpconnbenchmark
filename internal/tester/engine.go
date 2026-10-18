@@ -153,6 +153,7 @@ type Engine struct {
 	sessionID string
 	ring      *logRing
 	logSeq    atomic.Uint64
+	logMu     sync.Mutex
 
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -424,7 +425,6 @@ func (e *Engine) run() {
 			}
 			t := e.targets[index%len(e.targets)]
 			index++
-			e.attempts.Add(1)
 			e.wg.Add(1)
 			go func() {
 				defer e.wg.Done()
@@ -468,14 +468,21 @@ func (e *Engine) stopWithReason(reason string) {
 }
 
 func (e *Engine) attempt(t target) {
+	// A tick may be selected just before the duration timer cancels the
+	// context. If this worker has not actually started yet, it must not be
+	// counted as an attempt (and especially not as an aborted connection).
+	if e.ctx.Err() != nil {
+		return
+	}
 	started := time.Now()
+	e.attempts.Add(1)
 	e.dialing.Add(1)
 	conn, ip, err := e.connect(t)
 	e.dialing.Add(-1)
 
 	if err != nil {
 		if e.ctx.Err() != nil {
-			e.recordAborted()
+			e.recordAborted(t, ip, started)
 			return
 		}
 		e.recordResult(t, ip, started, false, err)
@@ -484,7 +491,7 @@ func (e *Engine) attempt(t target) {
 
 	if e.ctx.Err() != nil {
 		conn.Close()
-		e.recordAborted()
+		e.recordAborted(t, ip, started)
 		return
 	}
 
@@ -540,7 +547,6 @@ func (e *Engine) recordResult(t target, ip string, started time.Time, ok bool, e
 		message = truncateRunes(err.Error(), 240)
 	}
 	entry := LogEntry{
-		Seq:       e.logSeq.Add(1),
 		Time:      now.Format("15:04:05.000"),
 		Domain:    t.domain,
 		IP:        ip,
@@ -549,16 +555,37 @@ func (e *Engine) recordResult(t target, ip string, started time.Time, ok bool, e
 		LatencyMS: float64(now.Sub(started).Microseconds()) / 1000,
 		Error:     message,
 	}
-	e.ring.add(entry)
-	e.logger.write(entry, now)
+	e.writeEntry(entry, now)
 
 	if !ok && e.cfg.FailStop > 0 && e.failed.Load() >= uint64(e.cfg.FailStop) {
 		e.stopWithReason("失败次数达到上限")
 	}
 }
 
-func (e *Engine) recordAborted() {
+func (e *Engine) recordAborted(t target, ip string, started time.Time) {
 	e.aborted.Add(1)
+	now := time.Now()
+	entry := LogEntry{
+		Time:      now.Format("15:04:05.000"),
+		Domain:    t.domain,
+		IP:        ip,
+		Port:      t.port,
+		Aborted:   true,
+		LatencyMS: float64(now.Sub(started).Microseconds()) / 1000,
+	}
+	e.writeEntry(entry, now)
+}
+
+func (e *Engine) writeEntry(entry LogEntry, now time.Time) {
+	// Sequence assignment and ring insertion must be atomic: the UI resumes
+	// from the highest sequence it has seen, so inserting a lower sequence
+	// after a higher one would make that entry invisible to the live log.
+	e.logMu.Lock()
+	entry.Seq = e.logSeq.Add(1)
+	e.ring.add(entry)
+	e.logMu.Unlock()
+
+	e.logger.write(entry, now)
 }
 
 func (e *Engine) incrementActive() {

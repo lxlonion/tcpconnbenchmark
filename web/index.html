@@ -838,8 +838,10 @@
   .result-badge .rdot { width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
   .result-badge.ok { color: var(--success); background: var(--success-soft); }
   .result-badge.fail { color: var(--danger); background: var(--danger-soft); }
+  .result-badge.aborted { color: var(--warning); background: var(--warning-soft); }
   .detail-ok { color: var(--faint); }
   .detail-fail { color: var(--danger); opacity: .92; }
+  .detail-aborted { color: var(--warning); opacity: .92; }
 
   .log-empty {
     min-height: 214px;
@@ -1373,6 +1375,7 @@
             <button type="button" class="active" data-filter="all">全部</button>
             <button type="button" data-filter="success">成功</button>
             <button type="button" data-filter="fail">失败</button>
+            <button type="button" data-filter="aborted">中止</button>
           </div>
           <label class="switch" title="有新日志时自动滚动到底部">
             <input type="checkbox" id="autoScroll" checked>
@@ -1949,7 +1952,9 @@
     const completed = success + failed;
     const percent = duration > 0 ? Math.min(100, (elapsed / duration) * 100) : 0;
     const failPercent = failStop > 0 ? Math.min(100, (failed / failStop) * 100) : 0;
-    const rate = s.hasEngine ? (Number(s.ratePerSec) || state.defaultRate) : currentRateInput();
+    const rate = s.hasEngine && !s.finished
+      ? (Number(s.ratePerSec) || state.defaultRate)
+      : currentRateInput();
     renderRateDisplay(rate);
 
     setText(el.clock, fmtClock(elapsed));
@@ -2060,18 +2065,22 @@
 
     const resultTd = document.createElement("td");
     const badge = document.createElement("span");
-    badge.className = "result-badge " + (entry.ok ? "ok" : "fail");
+    const aborted = Boolean(entry.aborted);
+    badge.className = "result-badge " + (aborted ? "aborted" : (entry.ok ? "ok" : "fail"));
     const dot = document.createElement("span");
     dot.className = "rdot";
     badge.appendChild(dot);
-    badge.appendChild(document.createTextNode(entry.ok ? "成功" : "失败"));
+    badge.appendChild(document.createTextNode(aborted ? "中止" : (entry.ok ? "成功" : "失败")));
     resultTd.appendChild(badge);
     tr.appendChild(resultTd);
 
     tr.appendChild(makeCell(fmtLatency(entry.latencyMs), "cell-mono cell-latency"));
 
-    const detailText = entry.ok ? "TCP 已连接" : (entry.error || "连接失败");
-    tr.appendChild(makeCell(detailText, entry.ok ? "detail-ok" : "detail-fail", detailText));
+    const detailText = aborted
+      ? "测试停止，连接已取消"
+      : (entry.ok ? "TCP 已连接" : (entry.error || "连接失败"));
+    const detailClass = aborted ? "detail-aborted" : (entry.ok ? "detail-ok" : "detail-fail");
+    tr.appendChild(makeCell(detailText, detailClass, detailText));
     return tr;
   }
 
@@ -2085,7 +2094,8 @@
     const entries = state.entries;
     const filtered = entries.filter((entry) => {
       if (state.filter === "success") return entry.ok;
-      if (state.filter === "fail") return !entry.ok;
+      if (state.filter === "fail") return !entry.ok && !entry.aborted;
+      if (state.filter === "aborted") return Boolean(entry.aborted);
       return true;
     });
     const visible = filtered.slice(-500);
@@ -2320,7 +2330,10 @@
     el.refreshIfaces.addEventListener("click", refreshInterfaces);
     el.openLogs.addEventListener("click", openLogDirectory);
     el.duration.addEventListener("input", () => { if (!state.hasEngine) updateConfigPreview(); });
-    el.rate.addEventListener("input", () => { if (!state.hasEngine) updateConfigPreview(); });
+    el.rate.addEventListener("input", () => {
+      if (!state.hasEngine) updateConfigPreview();
+      else if (state.finished) renderRateDisplay(currentRateInput());
+    });
     el.failStop.addEventListener("input", () => { if (!state.hasEngine) updateConfigPreview(); });
 
     document.querySelectorAll(".filter-group button").forEach((button) => {

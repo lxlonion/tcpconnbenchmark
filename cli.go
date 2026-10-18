@@ -51,8 +51,12 @@ func runCLI(cfg tester.Config) {
 	fmt.Println()
 	fmt.Println("测试结束")
 	fmt.Printf("停止原因: %s\n", snap.StopReason)
-	fmt.Printf("尝试 %d　成功 %d　失败 %d　中止 %d　成功率 %.2f%%\n",
-		snap.Attempts, snap.Success, snap.Failed, snap.Aborted, snap.SuccessRate)
+	successRate := "—"
+	if snap.Success+snap.Failed > 0 {
+		successRate = fmt.Sprintf("%.2f%%", snap.SuccessRate)
+	}
+	fmt.Printf("尝试 %d　成功 %d　失败 %d　中止 %d　成功率 %s\n",
+		snap.Attempts, snap.Success, snap.Failed, snap.Aborted, successRate)
 	fmt.Printf("峰值并发: %d　平均发起: %.1f 次/秒\n", snap.Max, snap.AvgRate)
 	fmt.Printf("日志: %s\n", snap.LogPath)
 	fmt.Printf("摘要: %s\n", snap.SummaryPath)

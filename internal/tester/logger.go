@@ -232,7 +232,11 @@ func (l *resultLogger) writeSummary(status string, snap *Snapshot) error {
 		fmt.Fprintf(&b, "成功: %d\n", snap.Success)
 		fmt.Fprintf(&b, "失败: %d\n", snap.Failed)
 		fmt.Fprintf(&b, "中止: %d\n", snap.Aborted)
-		fmt.Fprintf(&b, "成功率: %.2f%%\n", snap.SuccessRate)
+		if snap.Success+snap.Failed > 0 {
+			fmt.Fprintf(&b, "成功率: %.2f%%\n", snap.SuccessRate)
+		} else {
+			b.WriteString("成功率: —\n")
+		}
 		fmt.Fprintf(&b, "峰值并发: %d\n", snap.Max)
 		fmt.Fprintf(&b, "平均发起速率: %.2f 次/秒\n", snap.AvgRate)
 		fmt.Fprintf(&b, "停止原因: %s\n", snap.StopReason)
