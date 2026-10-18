@@ -1,0 +1,2401 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>TCPLink · TCP 并发连接测试</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f2f5fa;
+    --panel: #ffffff;
+    --panel-2: #f7f9fc;
+    --panel-3: #eef3f9;
+    --border: #dfe6ef;
+    --border-soft: #eaf0f6;
+    --text: #0b1324;
+    --muted: #64748b;
+    --faint: #8a98ab;
+    --primary: #0891b2;
+    --primary-strong: #0e7490;
+    --primary-soft: rgba(8, 145, 178, .10);
+    --success: #059669;
+    --success-soft: rgba(5, 150, 105, .10);
+    --danger: #dc2626;
+    --danger-soft: rgba(220, 38, 38, .09);
+    --warning: #d97706;
+    --warning-soft: rgba(217, 119, 6, .10);
+    --info: #2563eb;
+    --info-soft: rgba(37, 99, 235, .09);
+    --track: #e7edf5;
+    --shadow: 0 1px 2px rgba(16, 30, 54, .04), 0 10px 30px rgba(16, 30, 54, .045);
+    --shadow-strong: 0 24px 70px rgba(16, 30, 54, .18);
+    --primary-button: linear-gradient(135deg, #0e7490, #0891b2);
+    --primary-button-text: #ffffff;
+    --dot-color: rgba(15, 23, 42, .055);
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    --radius: 16px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #070b11;
+      --panel: #0d131d;
+      --panel-2: #111927;
+      --panel-3: #151f2e;
+      --border: #1d2939;
+      --border-soft: #172231;
+      --text: #e8effa;
+      --muted: #8b9bb1;
+      --faint: #63748b;
+      --primary: #22d3ee;
+      --primary-strong: #67e8f9;
+      --primary-soft: rgba(34, 211, 238, .10);
+      --success: #34d399;
+      --success-soft: rgba(52, 211, 153, .10);
+      --danger: #fb7185;
+      --danger-soft: rgba(251, 113, 133, .10);
+      --warning: #fbbf24;
+      --warning-soft: rgba(251, 191, 36, .10);
+      --info: #60a5fa;
+      --info-soft: rgba(96, 165, 250, .10);
+      --track: #162131;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .26), 0 16px 40px rgba(0, 0, 0, .18);
+      --shadow-strong: 0 30px 90px rgba(0, 0, 0, .55);
+      --primary-button: linear-gradient(135deg, #22d3ee, #06b6d4);
+      --primary-button-text: #04212a;
+      --dot-color: rgba(255, 255, 255, .042);
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    min-height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -2;
+    background:
+      radial-gradient(900px 420px at 10% -14%, rgba(8, 145, 178, .14), transparent 62%),
+      radial-gradient(820px 380px at 100% -6%, rgba(99, 102, 241, .10), transparent 64%);
+    pointer-events: none;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    body::before {
+      background:
+        radial-gradient(1000px 460px at 8% -16%, rgba(34, 211, 238, .13), transparent 62%),
+        radial-gradient(900px 420px at 102% -8%, rgba(99, 102, 241, .12), transparent 64%);
+    }
+  }
+
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    background-image: radial-gradient(var(--dot-color) 1px, transparent 1px);
+    background-size: 22px 22px;
+    -webkit-mask-image: linear-gradient(to bottom, #000 0%, transparent 52%);
+    mask-image: linear-gradient(to bottom, #000 0%, transparent 52%);
+    pointer-events: none;
+  }
+
+  button, input, select, textarea { font: inherit; color: inherit; }
+  button { -webkit-tap-highlight-color: transparent; }
+  ::selection { background: var(--primary-soft); }
+
+  :focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 99px;
+    border: 2px solid var(--panel);
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--faint); }
+
+  .app {
+    width: 100%;
+    max-width: 1320px;
+    height: 100vh;
+    min-height: 680px;
+    margin: 0 auto;
+    padding: 20px 26px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 13px;
+  }
+
+  /* ---------- header ---------- */
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    min-height: 54px;
+  }
+
+  .brand { display: flex; align-items: center; gap: 13px; min-width: 0; }
+
+  .logo {
+    width: 43px;
+    height: 43px;
+    flex: 0 0 43px;
+    border-radius: 13px;
+    display: grid;
+    place-items: center;
+    color: #fff;
+    background: linear-gradient(140deg, #0e7490 0%, #0891b2 52%, #38bdf8 100%);
+    box-shadow: 0 7px 20px rgba(8, 145, 178, .28), inset 0 1px 0 rgba(255,255,255,.25);
+  }
+  .logo svg { width: 23px; height: 23px; }
+
+  .brand-copy { min-width: 0; }
+  .brand-title-row { display: flex; align-items: center; gap: 9px; }
+  .brand h1 {
+    margin: 0;
+    font-size: 20px;
+    line-height: 1.15;
+    font-weight: 720;
+    letter-spacing: -.025em;
+  }
+  .brand-sub {
+    margin-top: 3px;
+    font-size: 11.5px;
+    color: var(--muted);
+    letter-spacing: .005em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .micro-badge {
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    color: var(--primary-strong);
+    background: var(--primary-soft);
+    border: 1px solid color-mix(in srgb, var(--primary) 22%, transparent);
+    border-radius: 5px;
+    padding: 2px 5px;
+    white-space: nowrap;
+  }
+
+  .session {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex: 0 0 auto;
+  }
+
+  .pill {
+    --pill-color: var(--muted);
+    --pill-bg: var(--panel-3);
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 28px;
+    padding: 0 11px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-weight: 650;
+    color: var(--pill-color);
+    background: var(--pill-bg);
+    border: 1px solid transparent;
+    white-space: nowrap;
+  }
+  .pill .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 13%, transparent);
+  }
+  .pill.running { --pill-color: var(--success); --pill-bg: var(--success-soft); border-color: color-mix(in srgb, var(--success) 18%, transparent); }
+  .pill.running .dot { animation: pulse 1.5s ease-out infinite; }
+  .pill.stopping, .pill.starting { --pill-color: var(--warning); --pill-bg: var(--warning-soft); border-color: color-mix(in srgb, var(--warning) 18%, transparent); }
+  .pill.stopping .dot { animation: pulse 1s ease-out infinite; }
+  .pill.done { --pill-color: var(--primary-strong); --pill-bg: var(--primary-soft); border-color: color-mix(in srgb, var(--primary) 18%, transparent); }
+  .pill.failed { --pill-color: var(--danger); --pill-bg: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 18%, transparent); }
+  .pill.stopped { --pill-color: var(--muted); --pill-bg: var(--panel-3); }
+
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 32%, transparent); }
+    70% { box-shadow: 0 0 0 6px transparent; }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+
+  .clock-block {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 106px;
+    justify-content: flex-end;
+  }
+  .clock {
+    font-family: var(--mono);
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: -.04em;
+    font-variant-numeric: tabular-nums;
+  }
+  .clock-label {
+    font-size: 10px;
+    color: var(--faint);
+    letter-spacing: .06em;
+  }
+
+  /* ---------- cards ---------- */
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+  }
+
+  main {
+    display: flex;
+    flex-direction: column;
+    gap: 13px;
+    flex: 1;
+    min-height: 0;
+  }
+
+  .controls {
+    padding: 15px 18px;
+    display: grid;
+    grid-template-columns: minmax(235px, 1.3fr) minmax(190px, 1.1fr) minmax(96px, .58fr) minmax(96px, .58fr) minmax(155px, .9fr) auto;
+    gap: 16px;
+    align-items: end;
+  }
+
+  .control { min-width: 0; }
+  .field-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 7px;
+    min-height: 16px;
+    font-size: 10.5px;
+    font-weight: 650;
+    letter-spacing: .055em;
+    color: var(--muted);
+  }
+  .label-note { color: var(--faint); font-weight: 500; letter-spacing: .01em; }
+
+  .segmented {
+    height: 42px;
+    padding: 4px;
+    border-radius: 12px;
+    background: var(--track);
+    display: flex;
+    gap: 2px;
+  }
+  .segmented button {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    border-radius: 9px;
+    padding: 0 7px;
+    font-size: 11.5px;
+    font-weight: 650;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background .16s ease, color .16s ease, box-shadow .16s ease;
+  }
+  .segmented button:hover:not(:disabled) { color: var(--text); }
+  .segmented button.active {
+    background: var(--panel);
+    color: var(--primary-strong);
+    box-shadow: 0 1px 3px rgba(10, 20, 40, .10), inset 0 0 0 1px var(--border);
+  }
+  .segmented button:disabled { cursor: default; opacity: .62; }
+
+  .select-wrap { position: relative; }
+  .select-wrap select {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 42px;
+    padding: 0 34px 0 12px;
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    background: var(--panel-2);
+    color: var(--text);
+    font-size: 12.5px;
+    font-weight: 520;
+    cursor: pointer;
+    text-overflow: ellipsis;
+    transition: border-color .16s ease, background .16s ease;
+  }
+  .select-wrap select:hover:not(:disabled) { border-color: color-mix(in srgb, var(--primary) 35%, var(--border)); }
+  .select-wrap select:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 3px var(--primary-soft); }
+  .select-wrap select:disabled { opacity: .55; cursor: default; }
+  .select-wrap .chevron {
+    position: absolute;
+    right: 11px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 15px;
+    height: 15px;
+    color: var(--faint);
+    pointer-events: none;
+  }
+
+  .icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--faint);
+    cursor: pointer;
+    transition: color .15s ease, background .15s ease;
+  }
+  .icon-button:hover:not(:disabled) { color: var(--primary); background: var(--primary-soft); }
+  .icon-button svg { width: 13px; height: 13px; }
+  .icon-button.spin svg { animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .number-wrap { position: relative; }
+  .number-wrap input {
+    width: 100%;
+    height: 42px;
+    padding: 0 33px 0 12px;
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    background: var(--panel-2);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13.5px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    transition: border-color .16s ease, background .16s ease, box-shadow .16s ease;
+  }
+  .number-wrap input:hover:not(:disabled) { border-color: color-mix(in srgb, var(--primary) 35%, var(--border)); }
+  .number-wrap input:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 3px var(--primary-soft); }
+  .number-wrap input:disabled { opacity: .55; cursor: default; }
+  .number-wrap .unit {
+    position: absolute;
+    right: 11px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 10.5px;
+    color: var(--faint);
+    pointer-events: none;
+  }
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+  .domain-button {
+    width: 100%;
+    height: 42px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 11px;
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    background: var(--panel-2);
+    color: var(--text);
+    cursor: pointer;
+    transition: border-color .16s ease, background .16s ease;
+  }
+  .domain-button:hover:not(:disabled) { border-color: color-mix(in srgb, var(--primary) 35%, var(--border)); background: var(--panel); }
+  .domain-button:disabled { cursor: default; opacity: .55; }
+  .domain-button .layers { width: 15px; height: 15px; color: var(--faint); flex: 0 0 auto; }
+  .domain-button b {
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 650;
+    color: var(--primary-strong);
+    font-variant-numeric: tabular-nums;
+  }
+  .domain-button .domain-caption { font-size: 11.5px; color: var(--muted); }
+  .domain-button .edit-hint { margin-left: auto; font-size: 10.5px; color: var(--faint); }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 42px;
+    padding: 0 17px;
+    border-radius: 11px;
+    border: 1px solid transparent;
+    font-size: 13px;
+    font-weight: 680;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: transform .14s ease, box-shadow .16s ease, background .16s ease, color .16s ease, border-color .16s ease;
+    user-select: none;
+  }
+  .btn svg { width: 15px; height: 15px; flex: 0 0 auto; }
+  .btn:active:not(:disabled) { transform: translateY(1px); }
+  .btn.primary {
+    color: var(--primary-button-text);
+    background: var(--primary-button);
+    box-shadow: 0 6px 18px rgba(8, 145, 178, .22), inset 0 1px 0 rgba(255,255,255,.22);
+  }
+  .btn.primary:hover:not(:disabled) { box-shadow: 0 9px 24px rgba(8, 145, 178, .30), inset 0 1px 0 rgba(255,255,255,.25); }
+  .btn.stop {
+    color: var(--danger);
+    background: var(--danger-soft);
+    border-color: color-mix(in srgb, var(--danger) 26%, transparent);
+  }
+  .btn.stop:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 16%, transparent); }
+  .btn:disabled { opacity: .52; cursor: default; box-shadow: none; }
+  .start-wrap { display: flex; align-items: end; }
+  .start-wrap .btn { min-width: 128px; }
+  .spin { animation: spin .8s linear infinite; }
+
+  .hint-line {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 0 3px;
+    margin-top: -4px;
+    font-size: 10.5px;
+    color: var(--faint);
+    line-height: 1.5;
+  }
+  .hint-line svg { width: 12px; height: 12px; flex: 0 0 auto; }
+  .hint-line .sep { opacity: .55; }
+  .hint-line strong { color: var(--muted); font-weight: 600; }
+
+  /* ---------- stats ---------- */
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 11px;
+  }
+
+  .stat {
+    --tint: var(--info);
+    --tint-soft: var(--info-soft);
+    position: relative;
+    overflow: hidden;
+    padding: 14px 16px 13px;
+    border-radius: 15px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    box-shadow: var(--shadow);
+  }
+  .stat::after {
+    content: "";
+    position: absolute;
+    right: -34px;
+    bottom: -54px;
+    width: 126px;
+    height: 126px;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--tint-soft), transparent 68%);
+    opacity: .8;
+    pointer-events: none;
+  }
+  .stat.attempts { --tint: var(--info); --tint-soft: var(--info-soft); }
+  .stat.success { --tint: var(--success); --tint-soft: var(--success-soft); }
+  .stat.failure { --tint: var(--danger); --tint-soft: var(--danger-soft); }
+  .stat.active { --tint: var(--primary); --tint-soft: var(--primary-soft); }
+
+  .stat-head { display: flex; align-items: center; gap: 8px; }
+  .stat-icon {
+    width: 25px;
+    height: 25px;
+    border-radius: 8px;
+    display: grid;
+    place-items: center;
+    color: var(--tint);
+    background: var(--tint-soft);
+  }
+  .stat-icon svg { width: 14px; height: 14px; }
+  .stat-label {
+    font-size: 10.5px;
+    font-weight: 650;
+    letter-spacing: .07em;
+    color: var(--muted);
+  }
+  .stat-live {
+    margin-left: auto;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--tint);
+    opacity: .0;
+    transition: opacity .2s ease;
+  }
+  .stat.active.live .stat-live { opacity: 1; animation: pulse 1.4s ease-out infinite; }
+  .stat-value {
+    margin-top: 8px;
+    font-family: var(--mono);
+    font-size: 29px;
+    line-height: 1;
+    font-weight: 620;
+    letter-spacing: -.055em;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat.failure .stat-value { color: var(--danger); }
+  .stat.success .stat-value { color: var(--success); }
+  .stat-sub {
+    position: relative;
+    z-index: 1;
+    margin-top: 7px;
+    font-size: 10.5px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .stat-sub b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  /* ---------- progress ---------- */
+
+  .progress-card { padding: 14px 18px 13px; }
+  .progress-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 9px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .progress-left { display: flex; align-items: baseline; gap: 8px; }
+  .progress-title { font-weight: 650; letter-spacing: .055em; font-size: 10.5px; color: var(--muted); }
+  .progress-percent {
+    font-family: var(--mono);
+    color: var(--text);
+    font-size: 11.5px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .progress-right { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+  .progress-right b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .fail-meter {
+    width: 54px;
+    height: 5px;
+    border-radius: 99px;
+    background: var(--track);
+    overflow: hidden;
+  }
+  .fail-meter i {
+    display: block;
+    width: 0;
+    height: 100%;
+    border-radius: 99px;
+    background: var(--danger);
+    transition: width .3s ease;
+  }
+  .fail-meter.hidden { display: none; }
+
+  .progress-track {
+    height: 7px;
+    border-radius: 99px;
+    background: var(--track);
+    overflow: hidden;
+  }
+  .progress-fill {
+    width: 0;
+    height: 100%;
+    border-radius: 99px;
+    background: linear-gradient(90deg, var(--primary-strong), var(--primary), #38bdf8);
+    transition: width .32s ease;
+  }
+
+  .progress-foot {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    flex-wrap: wrap;
+    margin-top: 9px;
+    font-size: 10.5px;
+    color: var(--muted);
+  }
+  .progress-foot b {
+    color: var(--text);
+    font-family: var(--mono);
+    font-weight: 550;
+    font-variant-numeric: tabular-nums;
+  }
+  .progress-foot .spacer { flex: 1; }
+  .progress-foot .muted { color: var(--faint); }
+
+  /* ---------- log ---------- */
+
+  .log-card {
+    flex: 1;
+    min-height: 180px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .log-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 12px 16px 10px;
+    border-bottom: 1px solid var(--border-soft);
+    flex-wrap: wrap;
+  }
+  .log-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .log-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--faint);
+  }
+  .log-dot.live { background: var(--success); animation: pulse 1.5s ease-out infinite; }
+  .log-title h2 {
+    margin: 0;
+    font-size: 12.5px;
+    font-weight: 680;
+    letter-spacing: -.005em;
+  }
+  .log-badge {
+    font-size: 9.5px;
+    font-weight: 650;
+    letter-spacing: .05em;
+    color: var(--muted);
+    background: var(--panel-3);
+    border-radius: 5px;
+    padding: 2px 6px;
+  }
+  .log-badge.live { color: var(--success); background: var(--success-soft); }
+  .log-tools { display: flex; align-items: center; gap: 13px; margin-left: auto; }
+
+  .filter-group {
+    display: flex;
+    align-items: center;
+    padding: 3px;
+    border-radius: 9px;
+    background: var(--track);
+    gap: 1px;
+  }
+  .filter-group button {
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 4px 9px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background .14s ease, color .14s ease, box-shadow .14s ease;
+  }
+  .filter-group button.active {
+    background: var(--panel);
+    color: var(--text);
+    box-shadow: 0 1px 2px rgba(10, 20, 40, .10), inset 0 0 0 1px var(--border);
+  }
+
+  .switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 10.5px;
+    color: var(--muted);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  .switch input { position: absolute; opacity: 0; pointer-events: none; }
+  .switch .slider {
+    width: 26px;
+    height: 15px;
+    border-radius: 99px;
+    background: var(--border);
+    position: relative;
+    transition: background .16s ease;
+    flex: 0 0 auto;
+  }
+  .switch .slider::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: var(--panel);
+    box-shadow: 0 1px 2px rgba(0,0,0,.22);
+    transition: transform .16s ease;
+  }
+  .switch input:checked + .slider { background: var(--primary); }
+  .switch input:checked + .slider::after { transform: translateX(11px); background: #fff; }
+  .switch input:focus-visible + .slider { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+  .log-header {
+    flex: 0 0 auto;
+    background: var(--panel);
+  }
+  .log-header[hidden] { display: none; }
+  .log-scroll {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+  table.log-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: 11px;
+  }
+  .log-table thead th {
+    background: var(--panel);
+    text-align: left;
+    padding: 8px 11px;
+    border-bottom: 1px solid var(--border-soft);
+    font-size: 9.5px;
+    font-weight: 650;
+    letter-spacing: .06em;
+    color: var(--faint);
+    white-space: nowrap;
+  }
+  .log-table tbody td {
+    padding: 7px 11px;
+    border-bottom: 1px solid var(--border-soft);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: middle;
+  }
+  .log-table tbody tr:last-child td { border-bottom: 0; }
+  .log-table tbody tr:hover { background: var(--panel-2); }
+  .log-table col.c-time { width: 114px; }
+  .log-table col.c-domain { width: 174px; }
+  .log-table col.c-port { width: 58px; }
+  .log-table col.c-ip { width: 144px; }
+  .log-table col.c-result { width: 76px; }
+  .log-table col.c-latency { width: 92px; }
+  .cell-mono { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 10.5px; color: var(--muted); }
+  .cell-domain { font-weight: 550; color: var(--text); }
+  .cell-time { color: var(--faint); }
+  .cell-ip { color: var(--muted); }
+  .cell-latency { color: var(--muted); }
+  .port-pill {
+    display: inline-block;
+    min-width: 34px;
+    text-align: center;
+    padding: 1px 5px;
+    border-radius: 5px;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    font-weight: 600;
+    color: var(--muted);
+    background: var(--panel-3);
+    border: 1px solid var(--border-soft);
+  }
+  .port-pill.p443 { color: var(--info); background: var(--info-soft); border-color: transparent; }
+  .result-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-size: 9.5px;
+    font-weight: 650;
+    white-space: nowrap;
+  }
+  .result-badge .rdot { width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
+  .result-badge.ok { color: var(--success); background: var(--success-soft); }
+  .result-badge.fail { color: var(--danger); background: var(--danger-soft); }
+  .detail-ok { color: var(--faint); }
+  .detail-fail { color: var(--danger); opacity: .92; }
+
+  .log-empty {
+    min-height: 214px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 24px;
+    color: var(--muted);
+  }
+  .log-empty[hidden] { display: none; }
+  .empty-art {
+    width: 46px;
+    height: 46px;
+    border-radius: 14px;
+    display: grid;
+    place-items: center;
+    margin-bottom: 10px;
+    color: var(--faint);
+    background: var(--panel-3);
+    border: 1px solid var(--border-soft);
+  }
+  .empty-art svg { width: 21px; height: 21px; }
+  .log-empty h3 { margin: 0 0 4px; font-size: 12px; font-weight: 620; color: var(--muted); }
+  .log-empty p { margin: 0; font-size: 10.5px; color: var(--faint); max-width: 360px; line-height: 1.6; }
+
+  .log-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 7px 15px;
+    border-top: 1px solid var(--border-soft);
+    font-size: 9.5px;
+    color: var(--faint);
+  }
+  .log-foot .counter { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  /* ---------- footer ---------- */
+
+  .page-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 1px 2px 0;
+    font-size: 10px;
+    color: var(--faint);
+    flex-wrap: wrap;
+    min-height: 22px;
+  }
+  .log-location {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    flex: 1;
+  }
+  .log-location svg { width: 13px; height: 13px; flex: 0 0 auto; color: var(--muted); }
+  .log-location .auto-label {
+    flex: 0 0 auto;
+    color: var(--success);
+    font-weight: 650;
+  }
+  .log-location code {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 56vw;
+  }
+  .link-button {
+    border: 0;
+    background: transparent;
+    color: var(--primary-strong);
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 4px;
+    border-radius: 5px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .link-button:hover { background: var(--primary-soft); }
+  .sys-meta {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+  .sys-meta .divider { width: 1px; height: 10px; background: var(--border); }
+  .log-error { color: var(--danger); max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ---------- modal ---------- */
+
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    background: rgba(3, 9, 18, .56);
+    -webkit-backdrop-filter: blur(7px);
+    backdrop-filter: blur(7px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 22px;
+  }
+  .modal-backdrop[hidden] { display: none; }
+  .modal {
+    width: min(760px, 100%);
+    max-height: calc(100vh - 44px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    box-shadow: var(--shadow-strong);
+  }
+  .modal-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 18px 20px 12px;
+  }
+  .modal-head h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -.012em;
+  }
+  .modal-head p {
+    margin: 4px 0 0;
+    font-size: 10.5px;
+    line-height: 1.6;
+    color: var(--muted);
+  }
+  .modal-close {
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: 8px;
+    display: grid;
+    place-items: center;
+    color: var(--muted);
+    background: transparent;
+    cursor: pointer;
+    flex: 0 0 auto;
+  }
+  .modal-close:hover { background: var(--panel-3); color: var(--text); }
+  .modal-close svg { width: 15px; height: 15px; }
+  .modal-body {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    padding: 0 20px;
+    gap: 9px;
+    flex: 1;
+  }
+  .domain-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-height: 22px;
+    font-size: 10px;
+    color: var(--muted);
+  }
+  .domain-meta .count-ok { color: var(--success); font-weight: 600; }
+  .domain-meta .count-bad { color: var(--danger); font-weight: 600; }
+  .domain-meta .spacer { flex: 1; }
+  .mini-button {
+    border: 1px solid var(--border);
+    background: var(--panel-2);
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 550;
+    border-radius: 7px;
+    padding: 4px 8px;
+    cursor: pointer;
+    transition: color .15s ease, border-color .15s ease, background .15s ease;
+  }
+  .mini-button:hover { color: var(--primary-strong); border-color: color-mix(in srgb, var(--primary) 30%, var(--border)); background: var(--primary-soft); }
+  #domainInput {
+    width: 100%;
+    flex: 1;
+    min-height: 290px;
+    resize: none;
+    padding: 12px 13px;
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    background: var(--panel-2);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 1.7;
+    outline: none;
+    tab-size: 2;
+  }
+  #domainInput:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+  .domain-invalid {
+    min-height: 0;
+    font-size: 10px;
+    line-height: 1.5;
+    color: var(--danger);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .domain-invalid:empty { display: none; }
+  .modal-foot {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 20px 17px;
+    border-top: 1px solid var(--border-soft);
+    margin-top: 12px;
+  }
+  .modal-foot .spacer { flex: 1; }
+  .btn.compact { height: 34px; padding: 0 14px; border-radius: 9px; font-size: 11.5px; }
+  .btn.ghost {
+    background: var(--panel-2);
+    border-color: var(--border);
+    color: var(--muted);
+  }
+  .btn.ghost:hover:not(:disabled) { color: var(--text); border-color: var(--faint); }
+
+  /* ---------- toast ---------- */
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    z-index: 120;
+    transform: translate(-50%, 14px);
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    max-width: min(540px, calc(100vw - 40px));
+    padding: 10px 14px 10px 11px;
+    border-radius: 11px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    box-shadow: 0 12px 40px rgba(3, 10, 22, .18), 0 2px 8px rgba(3, 10, 22, .08);
+    color: var(--text);
+    font-size: 11.5px;
+    line-height: 1.45;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .18s ease, transform .18s ease;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+  .toast-icon {
+    width: 19px;
+    height: 19px;
+    border-radius: 6px;
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-weight: 750;
+    color: var(--info);
+    background: var(--info-soft);
+  }
+  .toast.success .toast-icon { color: var(--success); background: var(--success-soft); }
+  .toast.error .toast-icon { color: var(--danger); background: var(--danger-soft); }
+  .toast.warn .toast-icon { color: var(--warning); background: var(--warning-soft); }
+  .toast-text { min-width: 0; overflow-wrap: anywhere; }
+
+  /* ---------- responsive ---------- */
+
+  @media (max-width: 1080px) {
+    .controls {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .control.mode, .control.iface { grid-column: span 1; }
+    .control.domains { grid-column: span 1; }
+    .start-wrap { grid-column: span 3; }
+    .start-wrap .btn { width: 100%; }
+    .brand-sub { max-width: 44vw; }
+  }
+
+  @media (max-width: 760px) {
+    .app { padding: 15px 14px 11px; gap: 10px; }
+    .topbar { align-items: flex-start; }
+    .session { gap: 9px; }
+    .clock-block { min-width: 0; }
+    .clock { font-size: 17px; }
+    .clock-label { display: none; }
+    .brand h1 { font-size: 18px; }
+    .brand-sub { display: none; }
+    .micro-badge { display: none; }
+    .controls { grid-template-columns: 1fr 1fr; gap: 12px; padding: 13px; }
+    .control.mode, .control.iface, .control.domains { grid-column: span 2; }
+    .start-wrap { grid-column: span 2; }
+    .stats { grid-template-columns: 1fr 1fr; gap: 9px; }
+    .stat { padding: 12px 13px; }
+    .stat-value { font-size: 25px; }
+    .log-table col.c-ip, .log-table th:nth-child(4), .log-table td:nth-child(4) { display: none; }
+    .log-table col.c-ip { width: 0; }
+    .log-table col.c-domain { width: 130px; }
+    .log-head { align-items: flex-start; }
+    .log-tools { width: 100%; justify-content: space-between; }
+    .progress-foot { gap: 10px; }
+    .progress-foot .spacer { display: none; }
+    .page-foot { align-items: flex-start; }
+    .sys-meta { display: none; }
+    .log-location code { max-width: 42vw; }
+  }
+
+  @media (max-height: 780px) and (min-width: 761px) {
+    .app { gap: 10px; padding-top: 14px; }
+    .controls { padding-top: 12px; padding-bottom: 12px; }
+    .stat { padding-top: 11px; padding-bottom: 11px; }
+    .stat-value { font-size: 26px; }
+    .log-card { min-height: 200px; }
+    .log-empty { min-height: 170px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="5.5" cy="6" r="2.1"></circle>
+          <circle cx="18.5" cy="6" r="2.1"></circle>
+          <circle cx="12" cy="18" r="2.1"></circle>
+          <path d="M7.6 6h8.8M6.7 7.9l3.8 8.3M17.3 7.9l-3.8 8.3"></path>
+        </svg>
+      </div>
+      <div class="brand-copy">
+        <div class="brand-title-row">
+          <h1>TCPLink</h1>
+          <span class="micro-badge">NO HTTP / TLS</span>
+        </div>
+        <div class="brand-sub">TCP 并发连接测试 · 仅完成三次握手，不发送 HTTP 请求或 TLS 数据</div>
+      </div>
+    </div>
+    <div class="session">
+      <span id="statusPill" class="pill idle" role="status" aria-live="polite">
+        <span class="dot"></span><span id="statusText">空闲</span>
+      </span>
+      <div class="clock-block">
+        <span id="clock" class="clock">00:00</span>
+        <span class="clock-label">已运行</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="card controls" aria-label="测试设置">
+      <div class="control mode">
+        <div class="field-label"><span>测试模式</span></div>
+        <div class="segmented" id="modeGroup" role="group" aria-label="测试模式">
+          <button type="button" class="mode-btn" data-mode="80" aria-pressed="false">TCP 80</button>
+          <button type="button" class="mode-btn" data-mode="443" aria-pressed="false">TCP 443</button>
+          <button type="button" class="mode-btn active" data-mode="both" aria-pressed="true">TCP 80 + 443</button>
+        </div>
+      </div>
+
+      <div class="control iface">
+        <div class="field-label">
+          <label for="iface">出口网卡</label>
+          <button type="button" class="icon-button" id="refreshIfaces" title="刷新网卡列表" aria-label="刷新网卡列表">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12a9 9 0 1 1-2.64-6.36"></path><path d="M21 3v6h-6"></path>
+            </svg>
+          </button>
+        </div>
+        <div class="select-wrap">
+          <select id="iface" aria-label="出口网卡">
+            <option value="">自动（系统默认路由）</option>
+          </select>
+          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m6 9 6 6 6-6"></path>
+          </svg>
+        </div>
+      </div>
+
+      <div class="control">
+        <div class="field-label"><label for="duration">测试时长</label></div>
+        <div class="number-wrap">
+          <input id="duration" type="number" min="1" max="86400" step="1" value="60" inputmode="numeric" aria-label="测试时长（秒）">
+          <span class="unit">秒</span>
+        </div>
+      </div>
+
+      <div class="control">
+        <div class="field-label"><label for="failStop">失败停止</label></div>
+        <div class="number-wrap">
+          <input id="failStop" type="number" min="0" max="10000000" step="1" value="50" inputmode="numeric" aria-label="累计失败多少次后停止">
+          <span class="unit">次</span>
+        </div>
+      </div>
+
+      <div class="control domains">
+        <div class="field-label"><span>测试域名</span><span class="label-note">内置 84 个</span></div>
+        <button type="button" class="domain-button" id="editDomains" title="编辑测试域名">
+          <svg class="layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m12 3 9 5-9 5-9-5 9-5Z"></path>
+            <path d="m3 13 9 5 9-5"></path>
+          </svg>
+          <b id="domainCount">84</b>
+          <span class="domain-caption">个域名</span>
+          <span class="edit-hint">编辑</span>
+        </button>
+      </div>
+
+      <div class="start-wrap">
+        <button type="button" class="btn primary" id="startBtn" disabled>
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.53.85l10.1-6.5a1 1 0 0 0 0-1.7L9.53 4.65A1 1 0 0 0 8 5.5Z"></path></svg>
+          <span>开始测试</span>
+        </button>
+      </div>
+    </section>
+
+    <div class="hint-line">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9"></circle><path d="M12 11v5"></path><path d="M12 8h.01"></path>
+      </svg>
+      <span>发起间隔 <strong id="intervalHint">8ms（约 125 次/秒）</strong></span>
+      <span class="sep">·</span>
+      <span>单连接最长保持 <strong id="holdHint">60s</strong></span>
+      <span class="sep">·</span>
+      <span>达到时长、失败上限或手动停止后关闭全部连接并保存日志</span>
+    </div>
+
+    <section class="stats" aria-label="实时连接统计">
+      <article class="stat attempts">
+        <div class="stat-head">
+          <span class="stat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"></path></svg>
+          </span>
+          <span class="stat-label">尝试</span>
+          <span class="stat-live"></span>
+        </div>
+        <div class="stat-value" id="statAttempts">0</div>
+        <div class="stat-sub">平均 <b id="attemptRate">0.0 次/秒</b></div>
+      </article>
+
+      <article class="stat success">
+        <div class="stat-head">
+          <span class="stat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m20 6-11 11-5-5"></path></svg>
+          </span>
+          <span class="stat-label">成功</span>
+          <span class="stat-live"></span>
+        </div>
+        <div class="stat-value" id="statSuccess">0</div>
+        <div class="stat-sub">成功率 <b id="successRate">—</b></div>
+      </article>
+
+      <article class="stat failure">
+        <div class="stat-head">
+          <span class="stat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+          </span>
+          <span class="stat-label">失败</span>
+          <span class="stat-live"></span>
+        </div>
+        <div class="stat-value" id="statFailed">0</div>
+        <div class="stat-sub" id="failLimitLabel">失败上限 50 次</div>
+      </article>
+
+      <article class="stat active" id="activeCard">
+        <div class="stat-head">
+          <span class="stat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.07 0l2.12-2.12a5 5 0 0 0-7.07-7.07L11 4.93"></path><path d="M14 11a5 5 0 0 0-7.07 0L4.8 13.12a5 5 0 0 0 7.07 7.07L13 19.07"></path></svg>
+          </span>
+          <span class="stat-label">进行中</span>
+          <span class="stat-live"></span>
+        </div>
+        <div class="stat-value" id="statActive">0</div>
+        <div class="stat-sub">拨号中 <b id="dialingCount">0</b> · 已关闭 <b id="closedInline">0</b></div>
+      </article>
+    </section>
+
+    <section class="card progress-card" aria-label="测试进度">
+      <div class="progress-head">
+        <div class="progress-left">
+          <span class="progress-title">测试进度</span>
+          <span class="progress-percent" id="progressPercent">0%</span>
+        </div>
+        <div class="progress-right">
+          <span>失败 <b id="failProgressCount">0</b> / <span id="failProgressLimit">50</span></span>
+          <span class="fail-meter" id="failMeterWrap"><i id="failMeter"></i></span>
+        </div>
+      </div>
+      <div class="progress-track" role="progressbar" aria-label="测试进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progressBar">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      <div class="progress-foot">
+        <span>已运行 <b id="elapsedSmall">00:00</b> / <b id="totalSmall">01:00</b></span>
+        <span id="remainingWrap">剩余 <b id="remaining">01:00</b></span>
+        <span id="stopReasonWrap" hidden>停止原因 <b id="stopReasonText">—</b></span>
+        <span id="abortedWrap" hidden>中止 <b id="aborted">0</b></span>
+        <span>峰值并发 <b id="peak">0</b></span>
+        <span class="spacer"></span>
+        <span class="muted">发起间隔 <b id="intervalFoot">8ms</b> · 单连接保持上限 <b id="holdFoot">60s</b></span>
+      </div>
+    </section>
+
+    <section class="card log-card" aria-label="实时连接日志">
+      <div class="log-head">
+        <div class="log-title">
+          <span class="log-dot" id="logDot"></span>
+          <h2>实时连接日志</h2>
+          <span class="log-badge" id="logBadge">等待测试</span>
+        </div>
+        <div class="log-tools">
+          <div class="filter-group" role="group" aria-label="日志筛选">
+            <button type="button" class="active" data-filter="all">全部</button>
+            <button type="button" data-filter="success">成功</button>
+            <button type="button" data-filter="fail">失败</button>
+          </div>
+          <label class="switch" title="有新日志时自动滚动到底部">
+            <input type="checkbox" id="autoScroll" checked>
+            <span class="slider"></span>
+            <span>自动滚动</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="log-header" id="logHeader" hidden>
+        <table class="log-table" aria-hidden="true">
+          <colgroup>
+            <col class="c-time"><col class="c-domain"><col class="c-port"><col class="c-ip"><col class="c-result"><col class="c-latency"><col>
+          </colgroup>
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>域名</th>
+              <th>端口</th>
+              <th>IPv4 地址</th>
+              <th>结果</th>
+              <th>耗时</th>
+              <th>详情</th>
+            </tr>
+          </thead>
+        </table>
+      </div>
+
+      <div class="log-scroll" id="logScroll">
+        <table class="log-table" id="logTable" hidden>
+          <colgroup>
+            <col class="c-time"><col class="c-domain"><col class="c-port"><col class="c-ip"><col class="c-result"><col class="c-latency"><col>
+          </colgroup>
+          <tbody id="logBody"></tbody>
+        </table>
+
+        <div class="log-empty" id="logEmpty">
+          <div class="empty-art" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 7h16M4 12h16M4 17h10"></path>
+              <circle cx="18" cy="17" r="2.4"></circle>
+            </svg>
+          </div>
+          <h3>等待连接记录</h3>
+          <p>开始测试后，每次 TCP 握手的结果、耗时和失败原因都会实时显示在这里。</p>
+        </div>
+      </div>
+
+      <div class="log-foot">
+        <span>界面仅保留最近 500 条记录，完整日志自动写入文件</span>
+        <span class="counter" id="logCounter">0 条</span>
+      </div>
+    </section>
+  </main>
+
+  <footer class="page-foot">
+    <div class="log-location">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-9Z"></path>
+      </svg>
+      <span class="auto-label">自动保存</span>
+      <code id="logPath" title="测试日志路径">等待测试</code>
+      <button type="button" class="link-button" id="openLogs">打开目录</button>
+      <span class="log-error" id="logError" hidden></span>
+    </div>
+    <div class="sys-meta">
+      <span id="fdInfo">文件句柄 —</span>
+      <span class="divider"></span>
+      <span id="versionLabel">TCPLink</span>
+    </div>
+  </footer>
+</div>
+
+<div class="modal-backdrop" id="domainModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="domainModalTitle">
+    <div class="modal-head">
+      <div>
+        <h2 id="domainModalTitle">测试域名</h2>
+        <p>每行一个域名；也可以直接粘贴网址，程序会自动提取主机名，并转换为 IPv4 解析目标。</p>
+      </div>
+      <button type="button" class="modal-close" id="closeDomainModal" aria-label="关闭">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="domain-meta">
+        <span class="count-ok" id="domainValidCount">加载中…</span>
+        <span id="domainInvalidCount"></span>
+        <span class="spacer"></span>
+        <button type="button" class="mini-button" id="resetDomains">恢复内置 84 个</button>
+        <button type="button" class="mini-button" id="clearDomains">清空</button>
+      </div>
+      <textarea id="domainInput" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="测试域名列表"></textarea>
+      <div class="domain-invalid" id="domainInvalid"></div>
+    </div>
+    <div class="modal-foot">
+      <span class="domain-meta" style="min-height:0;color:var(--faint)">空行与 # 注释会被忽略</span>
+      <span class="spacer"></span>
+      <button type="button" class="btn ghost compact" id="cancelDomains">取消</button>
+      <button type="button" class="btn primary compact" id="applyDomains">应用域名</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite">
+  <span class="toast-icon" id="toastIcon">i</span>
+  <span class="toast-text" id="toastText"></span>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const $ = (id) => document.getElementById(id);
+  const el = {
+    statusPill: $("statusPill"),
+    statusText: $("statusText"),
+    clock: $("clock"),
+    modeGroup: $("modeGroup"),
+    iface: $("iface"),
+    refreshIfaces: $("refreshIfaces"),
+    duration: $("duration"),
+    failStop: $("failStop"),
+    domainCount: $("domainCount"),
+    editDomains: $("editDomains"),
+    startBtn: $("startBtn"),
+    intervalHint: $("intervalHint"),
+    holdHint: $("holdHint"),
+    intervalFoot: $("intervalFoot"),
+    holdFoot: $("holdFoot"),
+    statAttempts: $("statAttempts"),
+    statSuccess: $("statSuccess"),
+    statFailed: $("statFailed"),
+    statActive: $("statActive"),
+    activeCard: $("activeCard"),
+    attemptRate: $("attemptRate"),
+    successRate: $("successRate"),
+    failLimitLabel: $("failLimitLabel"),
+    dialingCount: $("dialingCount"),
+    closedInline: $("closedInline"),
+    failProgressCount: $("failProgressCount"),
+    failProgressLimit: $("failProgressLimit"),
+    failMeterWrap: $("failMeterWrap"),
+    failMeter: $("failMeter"),
+    progressBar: $("progressBar"),
+    progressFill: $("progressFill"),
+    progressPercent: $("progressPercent"),
+    elapsedSmall: $("elapsedSmall"),
+    totalSmall: $("totalSmall"),
+    remainingWrap: $("remainingWrap"),
+    remaining: $("remaining"),
+    stopReasonWrap: $("stopReasonWrap"),
+    stopReasonText: $("stopReasonText"),
+    abortedWrap: $("abortedWrap"),
+    aborted: $("aborted"),
+    peak: $("peak"),
+    logDot: $("logDot"),
+    logBadge: $("logBadge"),
+    logScroll: $("logScroll"),
+    logHeader: $("logHeader"),
+    logTable: $("logTable"),
+    logBody: $("logBody"),
+    logEmpty: $("logEmpty"),
+    logCounter: $("logCounter"),
+    autoScroll: $("autoScroll"),
+    logPath: $("logPath"),
+    logError: $("logError"),
+    openLogs: $("openLogs"),
+    fdInfo: $("fdInfo"),
+    versionLabel: $("versionLabel"),
+    domainModal: $("domainModal"),
+    domainInput: $("domainInput"),
+    domainValidCount: $("domainValidCount"),
+    domainInvalidCount: $("domainInvalidCount"),
+    domainInvalid: $("domainInvalid"),
+    resetDomains: $("resetDomains"),
+    clearDomains: $("clearDomains"),
+    closeDomainModal: $("closeDomainModal"),
+    cancelDomains: $("cancelDomains"),
+    applyDomains: $("applyDomains"),
+    toast: $("toast"),
+    toastIcon: $("toastIcon"),
+    toastText: $("toastText")
+  };
+
+  const ICONS = {
+    play: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.53.85l10.1-6.5a1 1 0 0 0 0-1.7L9.53 4.65A1 1 0 0 0 8 5.5Z"></path></svg>',
+    stop: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6.5" y="6.5" width="11" height="11" rx="1.6"></rect></svg>',
+    spinner: '<svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"></path></svg>'
+  };
+
+  const state = {
+    ready: false,
+    builtins: [],
+    domains: [],
+    logDir: "",
+    interval: 8,
+    maxHold: 60,
+    version: "",
+    fd: null,
+    mode: "both",
+    session: "",
+    since: 0,
+    entries: [],
+    received: 0,
+    filter: "all",
+    running: false,
+    stopping: false,
+    finished: false,
+    hasEngine: false,
+    busy: false,
+    busyLabel: "",
+    formLocked: false,
+    pollInFlight: false,
+    pollErrorShown: false,
+    finishNoticeFor: "",
+    dropWarned: false,
+    lastSnapshot: null,
+    lastButtonSignature: "",
+    toastTimer: 0
+  };
+
+  const numberFormat = new Intl.NumberFormat("zh-CN");
+
+  function fmtInt(value) {
+    return numberFormat.format(Number(value) || 0);
+  }
+
+  function pad2(n) {
+    return String(n).padStart(2, "0");
+  }
+
+  function fmtClock(seconds) {
+    const total = Math.max(0, Math.floor(Number(seconds) || 0));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    return h > 0 ? pad2(h) + ":" + pad2(m) + ":" + pad2(s) : pad2(m) + ":" + pad2(s);
+  }
+
+  function fmtLimit(value) {
+    const n = Number(value) || 0;
+    if (n > 1e15) return "∞";
+    return fmtInt(n);
+  }
+
+  function fmtPercent(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "—";
+    return n.toFixed(1) + "%";
+  }
+
+  function fmtLatency(ms) {
+    const n = Number(ms) || 0;
+    if (n > 0 && n < 0.05) return "<0.1 ms";
+    return n.toFixed(1) + " ms";
+  }
+
+  async function api(name, ...args) {
+    if (typeof window[name] !== "function") {
+      throw new Error("界面接口未就绪：" + name);
+    }
+    const raw = await window[name](...args);
+    if (typeof raw === "string") {
+      try {
+        return JSON.parse(raw);
+      } catch (err) {
+        throw new Error("接口返回格式错误：" + name);
+      }
+    }
+    return raw;
+  }
+
+  function showToast(message, kind, duration) {
+    kind = kind || "info";
+    duration = duration || 3800;
+    const icons = { success: "✓", error: "!", warn: "!", info: "i" };
+    el.toastIcon.textContent = icons[kind] || "i";
+    el.toastText.textContent = message;
+    el.toast.className = "toast show " + kind;
+    window.clearTimeout(state.toastTimer);
+    state.toastTimer = window.setTimeout(() => {
+      el.toast.classList.remove("show");
+    }, duration);
+  }
+
+  function currentDurationInput() {
+    const value = Number.parseInt(el.duration.value, 10);
+    return Number.isFinite(value) ? value : 60;
+  }
+
+  function currentFailStopInput() {
+    const value = Number.parseInt(el.failStop.value, 10);
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  function setText(node, text) {
+    if (node.textContent !== text) node.textContent = text;
+  }
+
+  function setMode(mode) {
+    state.mode = mode;
+    document.querySelectorAll(".mode-btn").forEach((button) => {
+      const active = button.dataset.mode === mode;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+  }
+
+  function updateConfigPreview() {
+    const duration = Math.max(1, currentDurationInput());
+    const failStop = Math.max(0, currentFailStopInput());
+    el.totalSmall.textContent = fmtClock(duration);
+    el.remaining.textContent = state.hasEngine ? el.remaining.textContent : fmtClock(duration);
+    el.failProgressLimit.textContent = failStop > 0 ? fmtInt(failStop) : "不限";
+    el.failLimitLabel.textContent = failStop > 0 ? "失败上限 " + fmtInt(failStop) + " 次" : "未设置失败上限";
+    el.failMeterWrap.classList.toggle("hidden", failStop <= 0);
+  }
+
+  function populateInterfaces(list, selected) {
+    const current = selected === undefined ? el.iface.value : selected;
+    const autoLabel = "自动（系统默认路由）";
+    const options = [{ value: "", label: autoLabel }];
+    (list || [])
+      .filter((info) => info && info.isUp !== false && !info.isLoopback)
+      .forEach((info) => {
+        options.push({ value: info.name, label: info.label || info.name });
+      });
+
+    el.iface.replaceChildren();
+    options.forEach((option) => {
+      const node = document.createElement("option");
+      node.value = option.value;
+      node.textContent = option.label;
+      el.iface.appendChild(node);
+    });
+    if (options.some((option) => option.value === current)) {
+      el.iface.value = current;
+    } else {
+      el.iface.value = "";
+    }
+  }
+
+  function updateDomainCount() {
+    el.domainCount.textContent = fmtInt(state.domains.length);
+    el.editDomains.title = state.domains.length
+      ? "编辑测试域名（当前 " + state.domains.length + " 个）"
+      : "添加测试域名";
+  }
+
+  function parseDomainToken(raw) {
+    let value = String(raw || "").trim();
+    if (!value) return null;
+    let url;
+    try {
+      url = new URL(value.includes("://") ? value : "http://" + value);
+    } catch (err) {
+      return null;
+    }
+    let host = (url.hostname || "").toLowerCase().replace(/\.$/, "");
+    if (!host || host.startsWith("[") || host.length > 253) return null;
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return host;
+    const labels = host.split(".");
+    for (const label of labels) {
+      if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)) return null;
+    }
+    return host;
+  }
+
+  function parseDomainText(text) {
+    const valid = [];
+    const invalid = [];
+    const seen = new Set();
+    const lines = String(text || "").split(/\r?\n/);
+    for (const line of lines) {
+      const withoutComment = line.split("#")[0];
+      const tokens = withoutComment.split(/[\s,;，；]+/).filter(Boolean);
+      for (const token of tokens) {
+        const domain = parseDomainToken(token);
+        if (!domain) {
+          invalid.push(token);
+          continue;
+        }
+        if (seen.has(domain)) continue;
+        seen.add(domain);
+        valid.push(domain);
+      }
+    }
+    return { valid, invalid };
+  }
+
+  function updateDomainPreview() {
+    const parsed = parseDomainText(el.domainInput.value);
+    el.domainValidCount.textContent = parsed.valid.length + " 个有效域名";
+    if (parsed.invalid.length > 0) {
+      el.domainInvalidCount.textContent = "· " + parsed.invalid.length + " 个无法识别";
+      el.domainInvalid.textContent = "无法识别：" + parsed.invalid.slice(0, 4).join("、") +
+        (parsed.invalid.length > 4 ? " 等" : "");
+    } else {
+      el.domainInvalidCount.textContent = "";
+      el.domainInvalid.textContent = "";
+    }
+    el.applyDomains.disabled = parsed.valid.length === 0;
+  }
+
+  function openDomainModal() {
+    if (state.formLocked || state.busy) return;
+    el.domainInput.value = state.domains.join("\n");
+    el.domainInput.scrollTop = 0;
+    updateDomainPreview();
+    el.domainModal.hidden = false;
+    document.body.style.overflow = "hidden";
+    window.setTimeout(() => {
+      el.domainInput.focus();
+      el.domainInput.scrollTop = 0;
+    }, 30);
+  }
+
+  function closeDomainModal() {
+    el.domainModal.hidden = true;
+    document.body.style.overflow = "";
+  }
+
+  function applyDomains() {
+    const parsed = parseDomainText(el.domainInput.value);
+    if (parsed.valid.length === 0) {
+      showToast("请至少保留一个有效的测试域名", "error");
+      el.domainInput.focus();
+      return;
+    }
+    state.domains = parsed.valid;
+    updateDomainCount();
+    closeDomainModal();
+    if (parsed.invalid.length > 0) {
+      showToast("已应用 " + parsed.valid.length + " 个域名，忽略 " + parsed.invalid.length + " 个无效项", "warn", 4500);
+    } else {
+      showToast("已应用 " + parsed.valid.length + " 个测试域名", "success", 2600);
+    }
+  }
+
+  function lockedFromSnapshot(snapshot) {
+    return Boolean(snapshot && snapshot.hasEngine && !snapshot.finished);
+  }
+
+  function setControlsLocked(locked) {
+    state.formLocked = locked;
+    el.modeGroup.querySelectorAll("button").forEach((button) => { button.disabled = locked; });
+    el.iface.disabled = locked;
+    el.refreshIfaces.disabled = locked;
+    el.duration.disabled = locked;
+    el.failStop.disabled = locked;
+    el.editDomains.disabled = locked;
+  }
+
+  function renderStartButton(snapshot) {
+    const button = el.startBtn;
+    let signature;
+    let label;
+    let icon;
+    let className = "btn";
+    let disabled = false;
+
+    if (state.busy) {
+      signature = "busy:" + state.busyLabel;
+      label = state.busyLabel || "请稍候…";
+      icon = ICONS.spinner;
+      disabled = true;
+    } else if (snapshot && snapshot.hasEngine && !snapshot.finished && snapshot.stopping) {
+      signature = "stopping";
+      label = "正在停止…";
+      icon = ICONS.spinner;
+      disabled = true;
+    } else if (snapshot && snapshot.hasEngine && !snapshot.finished && snapshot.running) {
+      signature = "running";
+      label = "停止测试";
+      icon = ICONS.stop;
+      className = "btn stop";
+    } else if (snapshot && snapshot.hasEngine && !snapshot.finished) {
+      signature = "preparing";
+      label = "准备中…";
+      icon = ICONS.spinner;
+      disabled = true;
+    } else {
+      signature = snapshot && snapshot.finished ? "finished" : "idle";
+      label = snapshot && snapshot.finished ? "开始新测试" : "开始测试";
+      icon = ICONS.play;
+      className = "btn primary";
+      if (!state.ready) disabled = true;
+    }
+
+    if (signature === state.lastButtonSignature) {
+      if (button.disabled !== disabled) button.disabled = disabled;
+      return;
+    }
+    state.lastButtonSignature = signature;
+    button.className = className;
+    button.innerHTML = icon + "<span>" + label + "</span>";
+    button.disabled = disabled;
+  }
+
+  function renderStatus(snapshot) {
+    let cls = "pill idle";
+    let text = "空闲";
+    let reason = "";
+    if (snapshot && snapshot.hasEngine) {
+      reason = snapshot.stopReason || "";
+      if (snapshot.finished) {
+        if (reason.indexOf("失败") >= 0) {
+          cls = "pill failed";
+          text = "已终止";
+        } else if (reason.indexOf("达到测试时长") >= 0 || reason.indexOf("测试结束") >= 0) {
+          cls = "pill done";
+          text = "已完成";
+        } else {
+          cls = "pill stopped";
+          text = "已停止";
+        }
+      } else if (snapshot.stopping) {
+        cls = "pill stopping";
+        text = "正在停止";
+      } else if (snapshot.running) {
+        cls = "pill running";
+        text = "运行中";
+      } else {
+        cls = "pill starting";
+        text = "准备中";
+      }
+    }
+    el.statusPill.className = cls;
+    setText(el.statusText, text);
+    el.statusPill.title = reason;
+  }
+
+  function renderSnapshot(snapshot) {
+    const s = snapshot || {};
+    const duration = s.hasEngine ? Number(s.durationSec) || 0 : Math.max(1, currentDurationInput());
+    const failStop = s.hasEngine ? Number(s.failStop) || 0 : Math.max(0, currentFailStopInput());
+    const elapsed = Math.max(0, Number(s.elapsedSec) || 0);
+    const remaining = s.hasEngine ? Math.max(0, Number(s.remainingSec) || 0) : duration;
+    const attempts = Number(s.attempts) || 0;
+    const success = Number(s.success) || 0;
+    const failed = Number(s.failed) || 0;
+    const aborted = Number(s.aborted) || 0;
+    const completed = success + failed;
+    const percent = duration > 0 ? Math.min(100, (elapsed / duration) * 100) : 0;
+    const failPercent = failStop > 0 ? Math.min(100, (failed / failStop) * 100) : 0;
+
+    setText(el.clock, fmtClock(elapsed));
+    setText(el.statAttempts, fmtInt(attempts));
+    setText(el.statSuccess, fmtInt(success));
+    setText(el.statFailed, fmtInt(failed));
+    setText(el.statActive, fmtInt(Math.max(0, Number(s.active) || 0)));
+    setText(el.dialingCount, fmtInt(Math.max(0, Number(s.dialing) || 0)));
+    setText(el.closedInline, fmtInt(Math.max(0, Number(s.closed) || 0)));
+    setText(el.attemptRate, (Number(s.avgRate) || 0).toFixed(1) + " 次/秒");
+    setText(el.successRate, completed > 0 ? fmtPercent(s.successRate) : "—");
+    setText(el.failLimitLabel, failStop > 0 ? "失败上限 " + fmtInt(failStop) + " 次" : "未设置失败上限");
+
+    setText(el.elapsedSmall, fmtClock(elapsed));
+    setText(el.totalSmall, fmtClock(duration));
+    setText(el.remaining, fmtClock(remaining));
+    setText(el.stopReasonText, s.stopReason || "—");
+    setText(el.aborted, fmtInt(aborted));
+    el.remainingWrap.hidden = Boolean(s.finished);
+    el.stopReasonWrap.hidden = !s.finished;
+    el.abortedWrap.hidden = aborted <= 0;
+    setText(el.peak, fmtInt(Math.max(0, Number(s.maxActive) || 0)));
+    setText(el.failProgressCount, fmtInt(failed));
+    setText(el.failProgressLimit, failStop > 0 ? fmtInt(failStop) : "不限");
+    setText(el.progressPercent, Math.floor(percent) + "%");
+    el.progressFill.style.width = percent + "%";
+    el.progressBar.setAttribute("aria-valuenow", String(Math.floor(percent)));
+    el.failMeter.style.width = failPercent + "%";
+    el.failMeterWrap.classList.toggle("hidden", failStop <= 0);
+
+    const activeNow = Number(s.active) || 0;
+    el.activeCard.classList.toggle("live", Boolean(s.hasEngine && s.running && activeNow > 0));
+
+    el.logDot.classList.toggle("live", Boolean(s.hasEngine && s.running && !s.finished));
+    el.logBadge.classList.toggle("live", Boolean(s.hasEngine && s.running && !s.finished));
+    let badge = "等待测试";
+    if (s.hasEngine) {
+      if (s.finished) badge = "已结束";
+      else if (s.stopping) badge = "正在停止";
+      else if (s.running) badge = "实时";
+      else badge = "准备中";
+    }
+    setText(el.logBadge, badge);
+
+    renderStatus(s);
+    renderStartButton(s);
+    setControlsLocked(lockedFromSnapshot(s) || state.busy);
+
+    if (s.logPath) {
+      el.logPath.textContent = s.logPath;
+      el.logPath.title = s.logPath;
+    }
+    if (s.logError) {
+      el.logError.hidden = false;
+      el.logError.textContent = "日志错误：" + s.logError;
+      el.logError.title = s.logError;
+    } else {
+      el.logError.hidden = true;
+      el.logError.textContent = "";
+      el.logError.title = "";
+    }
+  }
+
+  function announceFinished(snapshot) {
+    const sid = snapshot.sessionId || "";
+    if (!sid || state.finishNoticeFor === sid) return;
+    state.finishNoticeFor = sid;
+    const reason = snapshot.stopReason || "";
+    const total = (Number(snapshot.success) || 0) + (Number(snapshot.failed) || 0);
+    if (reason.indexOf("失败次数") >= 0 || reason.indexOf("失败") >= 0) {
+      showToast("失败次数达到上限，测试已终止。共记录 " + fmtInt(total) + " 次连接。", "warn", 6000);
+    } else if (reason.indexOf("达到测试时长") >= 0 || reason.indexOf("测试结束") >= 0) {
+      showToast("测试完成，成功建立 " + fmtInt(snapshot.success) + " 个连接，日志已保存。", "success", 5000);
+    } else {
+      showToast("测试已停止，日志已保存。", "info", 4500);
+    }
+    if (snapshot.logError) {
+      window.setTimeout(() => showToast("日志写入出现错误：" + snapshot.logError, "error", 7000), 500);
+    }
+  }
+
+  function makeCell(text, className, title) {
+    const td = document.createElement("td");
+    td.textContent = text;
+    if (className) td.className = className;
+    if (title) td.title = title;
+    return td;
+  }
+
+  function buildLogRow(entry) {
+    const tr = document.createElement("tr");
+    tr.appendChild(makeCell(entry.time || "—", "cell-mono cell-time"));
+
+    const domainTd = document.createElement("td");
+    domainTd.className = "cell-domain";
+    domainTd.textContent = entry.domain || "—";
+    domainTd.title = entry.domain || "";
+    tr.appendChild(domainTd);
+
+    const portTd = document.createElement("td");
+    const port = document.createElement("span");
+    port.className = "port-pill" + (Number(entry.port) === 443 ? " p443" : "");
+    port.textContent = String(entry.port || "—");
+    portTd.appendChild(port);
+    tr.appendChild(portTd);
+
+    tr.appendChild(makeCell(entry.ip || "—", "cell-mono cell-ip"));
+
+    const resultTd = document.createElement("td");
+    const badge = document.createElement("span");
+    badge.className = "result-badge " + (entry.ok ? "ok" : "fail");
+    const dot = document.createElement("span");
+    dot.className = "rdot";
+    badge.appendChild(dot);
+    badge.appendChild(document.createTextNode(entry.ok ? "成功" : "失败"));
+    resultTd.appendChild(badge);
+    tr.appendChild(resultTd);
+
+    tr.appendChild(makeCell(fmtLatency(entry.latencyMs), "cell-mono cell-latency"));
+
+    const detailText = entry.ok ? "TCP 已连接" : (entry.error || "连接失败");
+    tr.appendChild(makeCell(detailText, entry.ok ? "detail-ok" : "detail-fail", detailText));
+    return tr;
+  }
+
+  function syncLogScrollbar() {
+    const width = Math.max(0, el.logScroll.offsetWidth - el.logScroll.clientWidth);
+    el.logHeader.style.paddingRight = width + "px";
+  }
+
+  function renderLog() {
+    const previousTop = el.logScroll.scrollTop;
+    const entries = state.entries;
+    const filtered = entries.filter((entry) => {
+      if (state.filter === "success") return entry.ok;
+      if (state.filter === "fail") return !entry.ok;
+      return true;
+    });
+    const visible = filtered.slice(-500);
+    const fragment = document.createDocumentFragment();
+    for (const entry of visible) fragment.appendChild(buildLogRow(entry));
+    el.logBody.replaceChildren(fragment);
+
+    const hasRows = visible.length > 0;
+    el.logHeader.hidden = !hasRows;
+    el.logTable.hidden = !hasRows;
+    el.logEmpty.hidden = hasRows;
+    syncLogScrollbar();
+    if (!hasRows) {
+      const title = el.logEmpty.querySelector("h3");
+      const text = el.logEmpty.querySelector("p");
+      if (entries.length === 0) {
+        title.textContent = "等待连接记录";
+        text.textContent = "开始测试后，每次 TCP 握手的结果、耗时和失败原因都会实时显示在这里。";
+      } else {
+        title.textContent = "没有符合条件的记录";
+        text.textContent = "当前筛选条件下暂无连接记录，可切换到“全部”查看。";
+      }
+    }
+    setText(el.logCounter, fmtInt(visible.length) + " 条");
+
+    if (el.autoScroll.checked) {
+      window.requestAnimationFrame(() => {
+        el.logScroll.scrollTop = el.logScroll.scrollHeight;
+      });
+    } else {
+      el.logScroll.scrollTop = previousTop;
+    }
+  }
+
+  function appendLogs(logs) {
+    if (!Array.isArray(logs) || logs.length === 0) return false;
+    for (const entry of logs) {
+      state.entries.push(entry);
+      state.received += 1;
+      if (typeof entry.seq === "number" && entry.seq > state.since) {
+        state.since = entry.seq;
+      }
+    }
+    if (state.entries.length > 600) {
+      state.entries.splice(0, state.entries.length - 600);
+    }
+    return true;
+  }
+
+  function resetLogView() {
+    state.entries = [];
+    state.received = 0;
+    state.since = 0;
+    state.dropWarned = false;
+    renderLog();
+  }
+
+  async function pollOnce() {
+    if (state.pollInFlight) return;
+    state.pollInFlight = true;
+    try {
+      const since = state.session ? state.since : 0;
+      const result = await api("tcpPoll", since);
+      if (!result.ok) throw new Error(result.error || "状态读取失败");
+      const snapshot = result.snapshot || {};
+      const sid = snapshot.sessionId || "";
+
+      if (sid !== state.session) {
+        resetLogView();
+        state.session = sid;
+      }
+
+      state.hasEngine = Boolean(snapshot.hasEngine);
+      state.running = Boolean(snapshot.running);
+      state.stopping = Boolean(snapshot.stopping);
+      state.finished = Boolean(snapshot.finished);
+      state.lastSnapshot = snapshot;
+      state.pollErrorShown = false;
+
+      if (result.dropped && !state.dropWarned) {
+        state.dropWarned = true;
+        showToast("界面日志刷新过快，部分记录已省略；完整日志仍会写入文件。", "warn", 4500);
+      }
+
+      if (appendLogs(result.logs)) renderLog();
+      renderSnapshot(snapshot);
+
+      if (snapshot.finished && snapshot.hasEngine) {
+        announceFinished(snapshot);
+      }
+    } catch (err) {
+      if (!state.pollErrorShown) {
+        state.pollErrorShown = true;
+        showToast("读取测试状态失败：" + (err && err.message ? err.message : err), "error", 5000);
+      }
+    } finally {
+      state.pollInFlight = false;
+    }
+  }
+
+  async function startTest() {
+    if (!state.ready || state.busy) return;
+    const duration = Number.parseInt(el.duration.value, 10);
+    if (!Number.isFinite(duration) || duration < 1 || duration > 86400) {
+      showToast("测试时长需在 1 到 86400 秒之间", "error");
+      el.duration.focus();
+      return;
+    }
+    const failStop = Number.parseInt(el.failStop.value, 10);
+    if (!Number.isFinite(failStop) || failStop < 0) {
+      showToast("失败停止次数不能为负数", "error");
+      el.failStop.focus();
+      return;
+    }
+    if (state.domains.length === 0) {
+      showToast("请先添加至少一个测试域名", "error");
+      openDomainModal();
+      return;
+    }
+
+    const config = {
+      mode: state.mode,
+      interface: el.iface.value,
+      domains: state.domains.slice(),
+      durationSec: duration,
+      failStop: failStop
+    };
+
+    state.busy = true;
+    state.busyLabel = "正在启动…";
+    renderStartButton(state.lastSnapshot);
+    try {
+      const result = await api("tcpStart", JSON.stringify(config));
+      if (!result.ok) {
+        showToast(result.error || "启动测试失败", "error", 5500);
+        return;
+      }
+      state.session = result.sessionId || "";
+      state.since = 0;
+      state.finishNoticeFor = "";
+      state.lastButtonSignature = "";
+      resetLogView();
+      if (result.logPath) {
+        el.logPath.textContent = result.logPath;
+        el.logPath.title = result.logPath;
+      }
+      showToast("测试已启动，正在建立 TCP 连接…", "info", 2600);
+      await pollOnce();
+    } catch (err) {
+      showToast("启动测试失败：" + (err && err.message ? err.message : err), "error", 5500);
+    } finally {
+      state.busy = false;
+      state.busyLabel = "";
+      renderStartButton(state.lastSnapshot);
+      pollOnce();
+    }
+  }
+
+  async function stopTest() {
+    if (state.busy) return;
+    state.busy = true;
+    state.busyLabel = "正在停止…";
+    renderStartButton(state.lastSnapshot);
+    try {
+      const result = await api("tcpStop");
+      if (!result.ok) {
+        showToast(result.error || "停止测试失败", "error", 5000);
+      }
+    } catch (err) {
+      showToast("停止测试失败：" + (err && err.message ? err.message : err), "error", 5000);
+    } finally {
+      state.busy = false;
+      state.busyLabel = "";
+      pollOnce();
+    }
+  }
+
+  async function refreshInterfaces() {
+    if (el.refreshIfaces.disabled) return;
+    el.refreshIfaces.disabled = true;
+    el.refreshIfaces.classList.add("spin");
+    try {
+      const result = await api("tcpInterfaces");
+      if (!result.ok) throw new Error(result.error || "刷新失败");
+      const selected = el.iface.value;
+      populateInterfaces(result.interfaces || [], selected);
+      if (el.iface.value !== selected) {
+        showToast("所选网卡已不可用，已切换为自动选择", "warn");
+      } else {
+        showToast("网卡列表已刷新", "info", 1800);
+      }
+    } catch (err) {
+      showToast("刷新网卡失败：" + (err && err.message ? err.message : err), "error", 4500);
+    } finally {
+      el.refreshIfaces.classList.remove("spin");
+      el.refreshIfaces.disabled = state.formLocked;
+    }
+  }
+
+  async function openLogDirectory() {
+    try {
+      const result = await api("tcpOpenLogs");
+      if (!result.ok) throw new Error(result.error || "无法打开日志目录");
+    } catch (err) {
+      showToast("打开日志目录失败：" + (err && err.message ? err.message : err), "error", 4500);
+    }
+  }
+
+  async function boot() {
+    // Static events are available immediately, even before Go bindings answer.
+    document.querySelectorAll(".mode-btn").forEach((button) => {
+      button.addEventListener("click", () => {
+        if (button.disabled) return;
+        setMode(button.dataset.mode);
+      });
+    });
+
+    el.startBtn.addEventListener("click", () => {
+      const snapshot = state.lastSnapshot;
+      const canStop = snapshot && snapshot.hasEngine && !snapshot.finished && snapshot.running && !snapshot.stopping;
+      if (canStop) stopTest();
+      else startTest();
+    });
+
+    el.refreshIfaces.addEventListener("click", refreshInterfaces);
+    el.openLogs.addEventListener("click", openLogDirectory);
+    el.duration.addEventListener("input", () => { if (!state.hasEngine) updateConfigPreview(); });
+    el.failStop.addEventListener("input", () => { if (!state.hasEngine) updateConfigPreview(); });
+
+    document.querySelectorAll(".filter-group button").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelectorAll(".filter-group button").forEach((b) => b.classList.remove("active"));
+        button.classList.add("active");
+        state.filter = button.dataset.filter;
+        renderLog();
+      });
+    });
+
+    let logPointerStart = 0;
+    el.logScroll.addEventListener("pointerdown", () => {
+      logPointerStart = el.logScroll.scrollTop;
+    });
+    el.logScroll.addEventListener("pointerup", () => {
+      if (el.autoScroll.checked && el.logScroll.scrollTop < logPointerStart - 24) {
+        el.autoScroll.checked = false;
+      }
+    });
+    el.logScroll.addEventListener("wheel", (event) => {
+      if (event.deltaY < 0 && el.autoScroll.checked) el.autoScroll.checked = false;
+    }, { passive: true });
+    el.logScroll.addEventListener("touchmove", () => {
+      if (!el.autoScroll.checked) return;
+      const distance = el.logScroll.scrollHeight - el.logScroll.scrollTop - el.logScroll.clientHeight;
+      if (distance > 100) el.autoScroll.checked = false;
+    }, { passive: true });
+    window.addEventListener("resize", syncLogScrollbar);
+
+    el.editDomains.addEventListener("click", openDomainModal);
+    el.closeDomainModal.addEventListener("click", closeDomainModal);
+    el.cancelDomains.addEventListener("click", closeDomainModal);
+    el.applyDomains.addEventListener("click", applyDomains);
+    el.resetDomains.addEventListener("click", () => {
+      el.domainInput.value = state.builtins.join("\n");
+      updateDomainPreview();
+      el.domainInput.focus();
+    });
+    el.clearDomains.addEventListener("click", () => {
+      el.domainInput.value = "";
+      updateDomainPreview();
+      el.domainInput.focus();
+    });
+    el.domainInput.addEventListener("input", updateDomainPreview);
+    el.domainModal.addEventListener("mousedown", (event) => {
+      if (event.target === el.domainModal) closeDomainModal();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !el.domainModal.hidden) closeDomainModal();
+    });
+
+    updateConfigPreview();
+    renderSnapshot({
+      hasEngine: false,
+      running: false,
+      stopping: false,
+      finished: false,
+      attempts: 0,
+      success: 0,
+      failed: 0,
+      active: 0,
+      dialing: 0,
+      closed: 0,
+      maxActive: 0,
+      durationSec: Math.max(1, currentDurationInput()),
+      elapsedSec: 0,
+      remainingSec: Math.max(1, currentDurationInput()),
+      failStop: Math.max(0, currentFailStopInput()),
+      avgRate: 0,
+      successRate: 0
+    });
+
+    try {
+      const data = await api("tcpBootstrap");
+      state.builtins = Array.isArray(data.domains) ? data.domains : [];
+      state.domains = state.builtins.slice();
+      state.logDir = data.logDir || "";
+      state.interval = Number(data.testIntervalMs) || 8;
+      state.maxHold = Number(data.maxHoldSec) || 60;
+      state.version = data.version || "";
+      state.fd = data.fdLimit || null;
+
+      populateInterfaces(data.interfaces || [], "");
+      updateDomainCount();
+
+      const rate = Math.round(1000 / Math.max(1, state.interval));
+      el.intervalHint.textContent = state.interval + "ms（约 " + rate + " 次/秒）";
+      el.holdHint.textContent = state.maxHold + "s";
+      el.intervalFoot.textContent = state.interval + "ms";
+      el.holdFoot.textContent = state.maxHold + "s";
+      if (state.version) el.versionLabel.textContent = "TCPLink v" + state.version;
+
+      if (state.fd) {
+        if (state.fd.supported) {
+          el.fdInfo.textContent = "文件句柄 " + fmtLimit(state.fd.soft) + " / 硬上限 " + fmtLimit(state.fd.hard);
+          el.fdInfo.title = "启动时尝试将软上限提升至 " + fmtInt(state.fd.target) +
+            (state.fd.raised ? "，已提升" : "（当前已满足）") + (state.fd.error ? "；" + state.fd.error : "");
+        } else if (state.fd.error) {
+          el.fdInfo.textContent = "文件句柄限制调整失败";
+          el.fdInfo.title = state.fd.error;
+        } else {
+          el.fdInfo.textContent = "文件句柄限制：当前平台不适用";
+        }
+      }
+
+      if (state.logDir) {
+        el.logPath.textContent = "等待测试 · " + state.logDir;
+        el.logPath.title = state.logDir;
+      }
+
+      state.ready = true;
+      renderSnapshot(state.lastSnapshot);
+      showToast("已就绪，内置 " + state.builtins.length + " 个测试域名", "info", 2400);
+    } catch (err) {
+      showToast("界面初始化失败：" + (err && err.message ? err.message : err), "error", 8000);
+      el.startBtn.disabled = true;
+    }
+
+    pollOnce();
+    window.setInterval(pollOnce, 300);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot);
+  } else {
+    boot();
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+# build output
+/TCPLink
+/TCPLink.app
+/tcplink
+
+# tooling / screenshots
+/.openchamber/
+*.log
+
+# macOS
+.DS_Store
