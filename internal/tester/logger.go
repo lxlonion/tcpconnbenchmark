@@ -213,7 +213,7 @@ func (l *resultLogger) writeSummary(status string, snap *Snapshot) error {
 	} else {
 		b.WriteString("失败停止: 不限制\n")
 	}
-	fmt.Fprintf(&b, "发起间隔: %d 毫秒\n", TestInterval.Milliseconds())
+	fmt.Fprintf(&b, "发起速率: %d 次/秒\n", l.config.RatePerSec)
 	fmt.Fprintf(&b, "单连接最长保持: %d 秒\n", int(MaxConnectionHold.Seconds()))
 	if l.fdInfo.Supported {
 		fmt.Fprintf(&b, "文件句柄软上限: %d（硬上限 %d）\n", l.fdInfo.Soft, l.fdInfo.Hard)

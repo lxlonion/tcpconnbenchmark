@@ -119,3 +119,19 @@ func TestModePorts(t *testing.T) {
 		t.Fatalf("非法模式: %v", got)
 	}
 }
+
+func TestNewRejectsInvalidRate(t *testing.T) {
+	base := Config{
+		Mode:        Mode443,
+		Domains:     []string{"example.com"},
+		DurationSec: 1,
+		RatePerSec:  0,
+	}
+	if _, err := New(base); err == nil {
+		t.Fatal("rate=0 应被拒绝")
+	}
+	base.RatePerSec = MaxRatePerSec + 1
+	if _, err := New(base); err == nil {
+		t.Fatal("过大的 rate 应被拒绝")
+	}
+}

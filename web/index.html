@@ -288,8 +288,8 @@
   .controls {
     padding: 15px 18px;
     display: grid;
-    grid-template-columns: minmax(235px, 1.3fr) minmax(190px, 1.1fr) minmax(96px, .58fr) minmax(96px, .58fr) minmax(155px, .9fr) auto;
-    gap: 16px;
+    grid-template-columns: minmax(225px, 1.25fr) minmax(180px, 1.05fr) minmax(92px, .55fr) minmax(105px, .6fr) minmax(90px, .52fr) minmax(145px, .85fr) auto;
+    gap: 14px;
     align-items: end;
   }
 
@@ -405,6 +405,10 @@
   .number-wrap input:hover:not(:disabled) { border-color: color-mix(in srgb, var(--primary) 35%, var(--border)); }
   .number-wrap input:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 3px var(--primary-soft); }
   .number-wrap input:disabled { opacity: .55; cursor: default; }
+  .number-wrap input.invalid {
+    border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+    box-shadow: 0 0 0 3px var(--danger-soft);
+  }
   .number-wrap .unit {
     position: absolute;
     right: 11px;
@@ -414,6 +418,7 @@
     color: var(--faint);
     pointer-events: none;
   }
+  .control.rate .number-wrap input { padding-right: 48px; }
   input[type=number]::-webkit-inner-spin-button,
   input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 
@@ -1110,7 +1115,7 @@
 
   /* ---------- responsive ---------- */
 
-  @media (max-width: 1080px) {
+  @media (max-width: 1100px) {
     .controls {
       grid-template-columns: repeat(3, minmax(0, 1fr));
     }
@@ -1133,6 +1138,7 @@
     .micro-badge { display: none; }
     .controls { grid-template-columns: 1fr 1fr; gap: 12px; padding: 13px; }
     .control.mode, .control.iface, .control.domains { grid-column: span 2; }
+    .control.failstop { grid-column: span 2; }
     .start-wrap { grid-column: span 2; }
     .stats { grid-template-columns: 1fr 1fr; gap: 9px; }
     .stat { padding: 12px 13px; }
@@ -1224,7 +1230,7 @@
         </div>
       </div>
 
-      <div class="control">
+      <div class="control duration">
         <div class="field-label"><label for="duration">测试时长</label></div>
         <div class="number-wrap">
           <input id="duration" type="number" min="1" max="86400" step="1" value="60" inputmode="numeric" aria-label="测试时长（秒）">
@@ -1232,7 +1238,15 @@
         </div>
       </div>
 
-      <div class="control">
+      <div class="control rate">
+        <div class="field-label"><label for="rate">发起速率</label></div>
+        <div class="number-wrap">
+          <input id="rate" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" value="125" autocomplete="off" spellcheck="false" aria-label="每秒发起连接次数">
+          <span class="unit">次/秒</span>
+        </div>
+      </div>
+
+      <div class="control failstop">
         <div class="field-label"><label for="failStop">失败停止</label></div>
         <div class="number-wrap">
           <input id="failStop" type="number" min="0" max="10000000" step="1" value="50" inputmode="numeric" aria-label="累计失败多少次后停止">
@@ -1265,7 +1279,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
         <circle cx="12" cy="12" r="9"></circle><path d="M12 11v5"></path><path d="M12 8h.01"></path>
       </svg>
-      <span>发起间隔 <strong id="intervalHint">8ms（约 125 次/秒）</strong></span>
+      <span>发起速率 <strong id="rateHint">125 次/秒</strong></span>
       <span class="sep">·</span>
       <span>单连接最长保持 <strong id="holdHint">60s</strong></span>
       <span class="sep">·</span>
@@ -1343,7 +1357,7 @@
         <span id="abortedWrap" hidden>中止 <b id="aborted">0</b></span>
         <span>峰值并发 <b id="peak">0</b></span>
         <span class="spacer"></span>
-        <span class="muted">发起间隔 <b id="intervalFoot">8ms</b> · 单连接保持上限 <b id="holdFoot">60s</b></span>
+        <span class="muted">发起速率 <b id="rateFoot">125 次/秒</b> · 单连接保持上限 <b id="holdFoot">60s</b></span>
       </div>
     </section>
 
@@ -1481,13 +1495,14 @@
     iface: $("iface"),
     refreshIfaces: $("refreshIfaces"),
     duration: $("duration"),
+    rate: $("rate"),
     failStop: $("failStop"),
     domainCount: $("domainCount"),
     editDomains: $("editDomains"),
     startBtn: $("startBtn"),
-    intervalHint: $("intervalHint"),
+    rateHint: $("rateHint"),
     holdHint: $("holdHint"),
-    intervalFoot: $("intervalFoot"),
+    rateFoot: $("rateFoot"),
     holdFoot: $("holdFoot"),
     statAttempts: $("statAttempts"),
     statSuccess: $("statSuccess"),
@@ -1555,7 +1570,9 @@
     builtins: [],
     domains: [],
     logDir: "",
-    interval: 8,
+    defaultRate: 125,
+    minRate: 1,
+    maxRate: 1000,
     maxHold: 60,
     version: "",
     fd: null,
@@ -1655,6 +1672,30 @@
     return Number.isFinite(value) ? value : 0;
   }
 
+  function currentRateInput() {
+    const raw = String(el.rate.value || "").trim();
+    if (!/^\d+$/.test(raw)) return NaN;
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < state.minRate || value > state.maxRate) return NaN;
+    return value;
+  }
+
+  function rateSummary(rate) {
+    if (!Number.isFinite(rate) || rate <= 0) {
+      return "请输入 " + state.minRate + "–" + state.maxRate + " 的整数";
+    }
+    return rate + " 次/秒";
+  }
+
+  function renderRateDisplay(rate) {
+    setText(el.rateHint, rateSummary(rate));
+    setText(el.rateFoot, Number.isFinite(rate) && rate > 0 ? rate + " 次/秒" : "—");
+    const raw = String(el.rate.value || "").trim();
+    const invalid = raw !== "" && !(Number.isFinite(rate) && rate > 0);
+    el.rate.classList.toggle("invalid", invalid);
+    el.rate.setAttribute("aria-invalid", invalid ? "true" : "false");
+  }
+
   function setText(node, text) {
     if (node.textContent !== text) node.textContent = text;
   }
@@ -1671,11 +1712,13 @@
   function updateConfigPreview() {
     const duration = Math.max(1, currentDurationInput());
     const failStop = Math.max(0, currentFailStopInput());
+    const rate = currentRateInput();
     el.totalSmall.textContent = fmtClock(duration);
     el.remaining.textContent = state.hasEngine ? el.remaining.textContent : fmtClock(duration);
     el.failProgressLimit.textContent = failStop > 0 ? fmtInt(failStop) : "不限";
     el.failLimitLabel.textContent = failStop > 0 ? "失败上限 " + fmtInt(failStop) + " 次" : "未设置失败上限";
     el.failMeterWrap.classList.toggle("hidden", failStop <= 0);
+    renderRateDisplay(rate);
   }
 
   function populateInterfaces(list, selected) {
@@ -1809,6 +1852,7 @@
     el.iface.disabled = locked;
     el.refreshIfaces.disabled = locked;
     el.duration.disabled = locked;
+    el.rate.disabled = locked;
     el.failStop.disabled = locked;
     el.editDomains.disabled = locked;
   }
@@ -1905,6 +1949,8 @@
     const completed = success + failed;
     const percent = duration > 0 ? Math.min(100, (elapsed / duration) * 100) : 0;
     const failPercent = failStop > 0 ? Math.min(100, (failed / failStop) * 100) : 0;
+    const rate = s.hasEngine ? (Number(s.ratePerSec) || state.defaultRate) : currentRateInput();
+    renderRateDisplay(rate);
 
     setText(el.clock, fmtClock(elapsed));
     setText(el.statAttempts, fmtInt(attempts));
@@ -2154,6 +2200,12 @@
       el.failStop.focus();
       return;
     }
+    const rate = currentRateInput();
+    if (!Number.isFinite(rate)) {
+      showToast("发起速率需为 " + state.minRate + "–" + state.maxRate + " 的整数", "error");
+      el.rate.focus();
+      return;
+    }
     if (state.domains.length === 0) {
       showToast("请先添加至少一个测试域名", "error");
       openDomainModal();
@@ -2165,7 +2217,8 @@
       interface: el.iface.value,
       domains: state.domains.slice(),
       durationSec: duration,
-      failStop: failStop
+      failStop: failStop,
+      ratePerSec: rate
     };
 
     state.busy = true;
@@ -2267,6 +2320,7 @@
     el.refreshIfaces.addEventListener("click", refreshInterfaces);
     el.openLogs.addEventListener("click", openLogDirectory);
     el.duration.addEventListener("input", () => { if (!state.hasEngine) updateConfigPreview(); });
+    el.rate.addEventListener("input", () => { if (!state.hasEngine) updateConfigPreview(); });
     el.failStop.addEventListener("input", () => { if (!state.hasEngine) updateConfigPreview(); });
 
     document.querySelectorAll(".filter-group button").forEach((button) => {
@@ -2345,18 +2399,19 @@
       state.builtins = Array.isArray(data.domains) ? data.domains : [];
       state.domains = state.builtins.slice();
       state.logDir = data.logDir || "";
-      state.interval = Number(data.testIntervalMs) || 8;
+      state.defaultRate = Number(data.defaultRatePerSec) || 125;
+      state.minRate = Number(data.minRatePerSec) || 1;
+      state.maxRate = Number(data.maxRatePerSec) || 1000;
+      el.rate.value = String(state.defaultRate);
       state.maxHold = Number(data.maxHoldSec) || 60;
       state.version = data.version || "";
       state.fd = data.fdLimit || null;
 
       populateInterfaces(data.interfaces || [], "");
       updateDomainCount();
+      updateConfigPreview();
 
-      const rate = Math.round(1000 / Math.max(1, state.interval));
-      el.intervalHint.textContent = state.interval + "ms（约 " + rate + " 次/秒）";
       el.holdHint.textContent = state.maxHold + "s";
-      el.intervalFoot.textContent = state.interval + "ms";
       el.holdFoot.textContent = state.maxHold + "s";
       if (state.version) el.versionLabel.textContent = "TCPLink v" + state.version;
 

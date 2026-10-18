@@ -25,6 +25,7 @@ func main() {
 	modeFlag := flag.String("mode", "both", "测试模式: 80, 443, both")
 	duration := flag.Int("duration", 10, "测试时长（秒）")
 	failStop := flag.Int("fail-stop", 50, "累计失败多少次后停止，0 表示不限制")
+	rate := flag.Int("rate", tester.DefaultRatePerSec, "每秒发起连接次数")
 	iface := flag.String("iface", "", "出口网卡名称，例如 en0；留空使用系统默认路由")
 	domainsFlag := flag.String("domains", "", "测试域名，逗号或换行分隔；留空使用内置 84 个域名")
 	listInterfaces := flag.Bool("list-interfaces", false, "列出可用网卡后退出")
@@ -57,6 +58,7 @@ func main() {
 			Domains:     domains,
 			DurationSec: *duration,
 			FailStop:    *failStop,
+			RatePerSec:  *rate,
 		})
 		return
 	}

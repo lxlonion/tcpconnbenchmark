@@ -20,7 +20,7 @@ func runCLI(cfg tester.Config) {
 	snap := engine.Snapshot()
 	fmt.Println("TCPLink · TCP 并发连接测试（CLI）")
 	fmt.Printf("模式: %s　出口网卡: %s　域名: %d 个\n", snap.ModeLabel, snap.InterfaceLabel, snap.DomainCount)
-	fmt.Printf("时长: %d 秒　失败停止: %s　发起间隔: %dms\n", snap.DurationSec, failStopLabel(snap.FailStop), tester.TestInterval.Milliseconds())
+	fmt.Printf("时长: %d 秒　失败停止: %s　发起速率: %d 次/秒\n", snap.DurationSec, failStopLabel(snap.FailStop), snap.RatePerSec)
 	fmt.Printf("日志: %s\n", snap.LogPath)
 	fmt.Println("按 Ctrl+C 可提前停止；正在建立连接…")
 

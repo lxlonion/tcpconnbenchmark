@@ -14,8 +14,11 @@ import (
 )
 
 const (
-	// TestInterval is the delay between two connection attempts.
-	TestInterval = 8 * time.Millisecond
+	// DefaultRatePerSec is the default number of connection attempts per second.
+	DefaultRatePerSec = 125
+	// MinRatePerSec and MaxRatePerSec bound the configurable attempt rate.
+	MinRatePerSec = 1
+	MaxRatePerSec = 1000
 	// MaxConnectionHold is how long one successful connection is kept open.
 	MaxConnectionHold = 60 * time.Second
 	// DialTimeout bounds one TCP handshake.
@@ -73,6 +76,7 @@ type Config struct {
 	Domains     []string `json:"domains"`
 	DurationSec int      `json:"durationSec"`
 	FailStop    int      `json:"failStop"`
+	RatePerSec  int      `json:"ratePerSec"`
 }
 
 type target struct {
@@ -127,6 +131,7 @@ type Snapshot struct {
 	DomainCount    int    `json:"domainCount"`
 	TargetCount    int    `json:"targetCount"`
 	FailStop       int    `json:"failStop"`
+	RatePerSec     int    `json:"ratePerSec"`
 
 	StopReason  string `json:"stopReason"`
 	LogPath     string `json:"logPath"`
@@ -195,6 +200,9 @@ func New(cfg Config) (*Engine, error) {
 	}
 	if cfg.FailStop > 10_000_000 {
 		return nil, fmt.Errorf("失败停止次数过大")
+	}
+	if cfg.RatePerSec < MinRatePerSec || cfg.RatePerSec > MaxRatePerSec {
+		return nil, fmt.Errorf("发起速率需在 %d 到 %d 次/秒之间", MinRatePerSec, MaxRatePerSec)
 	}
 	if len(cfg.Domains) == 0 {
 		return nil, fmt.Errorf("请至少填写一个测试域名")
@@ -384,6 +392,7 @@ func (e *Engine) Snapshot() Snapshot {
 		DomainCount:    len(e.domains),
 		TargetCount:    len(e.targets),
 		FailStop:       e.cfg.FailStop,
+		RatePerSec:     e.cfg.RatePerSec,
 		StopReason:     reason,
 		LogPath:        e.logger.csvPath,
 		SummaryPath:    e.logger.summaryPath,
@@ -392,7 +401,8 @@ func (e *Engine) Snapshot() Snapshot {
 }
 
 func (e *Engine) run() {
-	ticker := time.NewTicker(TestInterval)
+	interval := time.Second / time.Duration(e.cfg.RatePerSec)
+	ticker := time.NewTicker(interval)
 	durationTimer := time.NewTimer(time.Duration(e.cfg.DurationSec) * time.Second)
 	defer ticker.Stop()
 	defer durationTimer.Stop()
