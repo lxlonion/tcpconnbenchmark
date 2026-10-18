@@ -2,6 +2,7 @@ package tester
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -144,9 +145,8 @@ type Engine struct {
 	cfg        Config
 	domains    []string
 	targets    []target
-	iface      *net.Interface
-	localIP    net.IP
 	ifaceLabel string
+	dialer     *net.Dialer
 	fdInfo     syslimit.Info
 
 	logger    *resultLogger
@@ -235,6 +235,15 @@ func New(cfg Config) (*Engine, error) {
 	}
 	cfg.Interface = ifaceName(iface)
 
+	dialer := &net.Dialer{
+		Timeout:   DialTimeout,
+		KeepAlive: 30 * time.Second,
+		Control:   interfaceControl(iface, localIP),
+	}
+	if localIP != nil {
+		dialer.LocalAddr = &net.TCPAddr{IP: localIP}
+	}
+
 	fdInfo := syslimit.Raise(FDSoftLimitTarget)
 	logger, err := newResultLogger(cfg, domains, ifaceLabel, fdInfo)
 	if err != nil {
@@ -244,9 +253,8 @@ func New(cfg Config) (*Engine, error) {
 	e := &Engine{
 		cfg:        cfg,
 		domains:    domains,
-		iface:      iface,
-		localIP:    localIP,
 		ifaceLabel: ifaceLabel,
+		dialer:     dialer,
 		fdInfo:     fdInfo,
 		logger:     logger,
 		sessionID:  logger.sessionID,
@@ -403,12 +411,28 @@ func (e *Engine) Snapshot() Snapshot {
 
 func (e *Engine) run() {
 	interval := time.Second / time.Duration(e.cfg.RatePerSec)
+	duration := time.Duration(e.cfg.DurationSec) * time.Second
+	started := time.Now()
 	ticker := time.NewTicker(interval)
-	durationTimer := time.NewTimer(time.Duration(e.cfg.DurationSec) * time.Second)
+	durationTimer := time.NewTimer(duration)
 	defer ticker.Stop()
 	defer durationTimer.Stop()
 
 	index := 0
+	launch := func() {
+		t := e.targets[index%len(e.targets)]
+		index++
+		e.wg.Add(1)
+		go func() {
+			defer e.wg.Done()
+			e.attempt(t)
+		}()
+	}
+
+	// Fire the first attempt immediately so that even a very short test does
+	// real work, and so the rate is measured from t=0.
+	launch()
+
 	for {
 		select {
 		case <-e.ctx.Done():
@@ -423,13 +447,12 @@ func (e *Engine) run() {
 				e.finish()
 				return
 			}
-			t := e.targets[index%len(e.targets)]
-			index++
-			e.wg.Add(1)
-			go func() {
-				defer e.wg.Done()
-				e.attempt(t)
-			}()
+			if time.Since(started) >= duration {
+				e.stopWithReason("达到测试时长")
+				e.finish()
+				return
+			}
+			launch()
 		}
 	}
 }
@@ -495,11 +518,6 @@ func (e *Engine) attempt(t target) {
 		return
 	}
 
-	if tcp, ok := conn.(*net.TCPConn); ok {
-		_ = tcp.SetKeepAlive(true)
-		_ = tcp.SetKeepAlivePeriod(30 * time.Second)
-	}
-
 	e.incrementActive()
 	e.recordResult(t, ip, started, true, nil)
 	e.hold(conn)
@@ -516,18 +534,10 @@ func (e *Engine) connect(t target) (net.Conn, string, error) {
 		return nil, ip.String(), e.ctx.Err()
 	}
 
-	dialer := &net.Dialer{
-		Timeout: DialTimeout,
-		Control: interfaceControl(e.iface, e.localIP),
-	}
-	if e.localIP != nil {
-		dialer.LocalAddr = &net.TCPAddr{IP: e.localIP}
-	}
-
 	dialCtx, cancelDial := context.WithTimeout(e.ctx, DialTimeout)
 	defer cancelDial()
 	address := net.JoinHostPort(ip.String(), strconv.Itoa(t.port))
-	conn, err := dialer.DialContext(dialCtx, "tcp4", address)
+	conn, err := e.dialer.DialContext(dialCtx, "tcp4", address)
 	if err != nil {
 		return nil, ip.String(), err
 	}
@@ -711,8 +721,10 @@ func (r *logRing) since(seq uint64, limit int) ([]LogEntry, bool) {
 // ---- DNS cache ----
 
 type dnsResolver struct {
-	mu    sync.Mutex
-	cache map[string]*dnsCacheEntry
+	mu       sync.Mutex
+	cache    map[string]*dnsCacheEntry
+	inflight map[string]*dnsCall
+	lookupIP func(context.Context, string) ([]net.IP, error)
 }
 
 type dnsCacheEntry struct {
@@ -722,8 +734,20 @@ type dnsCacheEntry struct {
 	next    int
 }
 
+type dnsCall struct {
+	done chan struct{}
+	ip   net.IP
+	err  error
+}
+
 func newDNSResolver() *dnsResolver {
-	return &dnsResolver{cache: make(map[string]*dnsCacheEntry)}
+	return &dnsResolver{
+		cache:    make(map[string]*dnsCacheEntry),
+		inflight: make(map[string]*dnsCall),
+		lookupIP: func(ctx context.Context, host string) ([]net.IP, error) {
+			return net.DefaultResolver.LookupIP(ctx, "ip4", host)
+		},
+	}
 }
 
 func (r *dnsResolver) lookup(ctx context.Context, host string) (net.IP, error) {
@@ -749,37 +773,62 @@ func (r *dnsResolver) lookup(ctx context.Context, host string) (net.IP, error) {
 			return ip, nil
 		}
 	}
-	r.mu.Unlock()
-
-	ips, err := net.DefaultResolver.LookupIP(ctx, "ip4", host)
-	if err != nil {
-		if ctx.Err() != nil {
+	if call, ok := r.inflight[host]; ok {
+		r.mu.Unlock()
+		select {
+		case <-call.done:
+			return call.ip, call.err
+		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
-		wrapped := fmt.Errorf("DNS 解析失败: %w", err)
-		r.store(host, &dnsCacheEntry{err: wrapped, expires: now.Add(dnsErrorTTL)})
-		return nil, wrapped
 	}
+	call := &dnsCall{done: make(chan struct{})}
+	r.inflight[host] = call
+	r.mu.Unlock()
 
-	var v4 []net.IP
-	for _, ip := range ips {
-		if ip4 := ip.To4(); ip4 != nil {
-			v4 = append(v4, ip4)
+	// Only the first caller for this host performs the lookup. Others wait on
+	// call.done above instead of hammering the system resolver.
+	ips, err := r.lookupIP(ctx, host)
+	now = time.Now()
+
+	var cacheEntry *dnsCacheEntry
+	switch {
+	case err != nil:
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			if errors.Is(ctxErr, context.DeadlineExceeded) {
+				call.err = fmt.Errorf("DNS 解析超时: %w", err)
+				cacheEntry = &dnsCacheEntry{err: call.err, expires: now.Add(dnsErrorTTL)}
+			} else {
+				// The test was stopped; do not cache a cancellation.
+				call.err = ctxErr
+			}
+		} else {
+			call.err = fmt.Errorf("DNS 解析失败: %w", err)
+			cacheEntry = &dnsCacheEntry{err: call.err, expires: now.Add(dnsErrorTTL)}
+		}
+	default:
+		var v4 []net.IP
+		for _, ip := range ips {
+			if ip4 := ip.To4(); ip4 != nil {
+				v4 = append(v4, ip4)
+			}
+		}
+		if len(v4) == 0 {
+			call.err = fmt.Errorf("DNS 未返回 IPv4 地址")
+			cacheEntry = &dnsCacheEntry{err: call.err, expires: now.Add(dnsErrorTTL)}
+		} else {
+			call.ip = v4[0]
+			cacheEntry = &dnsCacheEntry{ips: v4, expires: now.Add(dnsCacheTTL), next: 1}
 		}
 	}
-	if len(v4) == 0 {
-		wrapped := fmt.Errorf("DNS 未返回 IPv4 地址")
-		r.store(host, &dnsCacheEntry{err: wrapped, expires: now.Add(dnsErrorTTL)})
-		return nil, wrapped
-	}
 
-	entry := &dnsCacheEntry{ips: v4, expires: now.Add(dnsCacheTTL), next: 1}
-	r.store(host, entry)
-	return v4[0], nil
-}
-
-func (r *dnsResolver) store(host string, entry *dnsCacheEntry) {
 	r.mu.Lock()
-	r.cache[host] = entry
+	if cacheEntry != nil {
+		r.cache[host] = cacheEntry
+	}
+	delete(r.inflight, host)
+	close(call.done)
 	r.mu.Unlock()
+
+	return call.ip, call.err
 }

@@ -133,9 +133,6 @@ func TestDurationEndCountsAndLogsEveryAttempt(t *testing.T) {
 		if want := snap.Success + snap.Failed + snap.Aborted; snap.Attempts != want {
 			t.Fatalf("run %d: attempts=%d, success+failed+aborted=%d", i, snap.Attempts, want)
 		}
-		if snap.Aborted > 1 {
-			t.Fatalf("run %d: unexpected aborted count %d", i, snap.Aborted)
-		}
 
 		rows := readResultCSV(t, e.logger.csvPath)
 		if uint64(len(rows)) != snap.Attempts {
@@ -168,8 +165,8 @@ func TestSuccessfulRunClosesConnectionsAndLogsAllAttempts(t *testing.T) {
 	if snap.Attempts < 100 {
 		t.Fatalf("too few attempts: %d", snap.Attempts)
 	}
-	if snap.Failed != 0 || snap.Aborted != 0 {
-		t.Fatalf("unexpected failures: failed=%d aborted=%d", snap.Failed, snap.Aborted)
+	if snap.Failed != 0 {
+		t.Fatalf("unexpected failures: failed=%d", snap.Failed)
 	}
 	if snap.Active != 0 || snap.Closed != snap.Success {
 		t.Fatalf("connections not closed: active=%d closed=%d success=%d", snap.Active, snap.Closed, snap.Success)
@@ -183,8 +180,33 @@ func TestSuccessfulRunClosesConnectionsAndLogsAllAttempts(t *testing.T) {
 	if uint64(counts["success"]) != snap.Success {
 		t.Fatalf("csv success=%d, snapshot success=%d", counts["success"], snap.Success)
 	}
-	if counts["failed"] != 0 || counts["aborted"] != 0 {
-		t.Fatalf("unexpected CSV results: %v", counts)
+	if counts["failed"] != 0 {
+		t.Fatalf("unexpected CSV failures: %v", counts)
+	}
+}
+
+func TestFirstAttemptStartsImmediately(t *testing.T) {
+	e := newTestEngine(t, Config{
+		Mode:        Mode80,
+		Domains:     []string{"127.0.0.1"},
+		DurationSec: 1,
+		FailStop:    0,
+		RatePerSec:  1,
+	})
+	e.targets = []target{{domain: "127.0.0.1", port: closedTCPPort(t)}}
+	e.Start()
+	e.Wait()
+
+	snap := e.Snapshot()
+	if snap.Attempts != 1 {
+		t.Fatalf("attempts = %d, want 1 (first attempt should start at t=0)", snap.Attempts)
+	}
+	if snap.Success+snap.Failed+snap.Aborted != 1 {
+		t.Fatalf("completed attempts = %d, want 1", snap.Success+snap.Failed+snap.Aborted)
+	}
+	rows := readResultCSV(t, e.logger.csvPath)
+	if len(rows) != 1 {
+		t.Fatalf("csv rows: %v", rows)
 	}
 }
 

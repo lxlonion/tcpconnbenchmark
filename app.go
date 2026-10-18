@@ -19,18 +19,24 @@ import (
 //go:embed web/index.html
 var indexHTML string
 
-const version = "1.0.0"
+const (
+	version            = "1.0.0"
+	defaultGUIDuration = 60
+	defaultGUIFailStop = 50
+)
 
 type bootstrapData struct {
-	Domains           []string               `json:"domains"`
-	Interfaces        []tester.InterfaceInfo `json:"interfaces"`
-	LogDir            string                 `json:"logDir"`
-	FDLimit           syslimit.Info          `json:"fdLimit"`
-	DefaultRatePerSec int                    `json:"defaultRatePerSec"`
-	MinRatePerSec     int                    `json:"minRatePerSec"`
-	MaxRatePerSec     int                    `json:"maxRatePerSec"`
-	MaxHoldSec        int                    `json:"maxHoldSec"`
-	Version           string                 `json:"version"`
+	Domains            []string               `json:"domains"`
+	Interfaces         []tester.InterfaceInfo `json:"interfaces"`
+	LogDir             string                 `json:"logDir"`
+	FDLimit            syslimit.Info          `json:"fdLimit"`
+	DefaultRatePerSec  int                    `json:"defaultRatePerSec"`
+	DefaultDurationSec int                    `json:"defaultDurationSec"`
+	DefaultFailStop    int                    `json:"defaultFailStop"`
+	MinRatePerSec      int                    `json:"minRatePerSec"`
+	MaxRatePerSec      int                    `json:"maxRatePerSec"`
+	MaxHoldSec         int                    `json:"maxHoldSec"`
+	Version            string                 `json:"version"`
 }
 
 type startRequest struct {
@@ -76,15 +82,17 @@ func newApp(fdInfo syslimit.Info) *App {
 		fdInfo: fdInfo,
 		logDir: logDir,
 		bootstrap: bootstrapData{
-			Domains:           append([]string(nil), tester.BuiltinDomains...),
-			Interfaces:        tester.ListInterfaces(),
-			LogDir:            logDir,
-			FDLimit:           fdInfo,
-			DefaultRatePerSec: tester.DefaultRatePerSec,
-			MinRatePerSec:     tester.MinRatePerSec,
-			MaxRatePerSec:     tester.MaxRatePerSec,
-			MaxHoldSec:        int(tester.MaxConnectionHold.Seconds()),
-			Version:           version,
+			Domains:            append([]string(nil), tester.BuiltinDomains...),
+			Interfaces:         tester.ListInterfaces(),
+			LogDir:             logDir,
+			FDLimit:            fdInfo,
+			DefaultRatePerSec:  tester.DefaultRatePerSec,
+			DefaultDurationSec: defaultGUIDuration,
+			DefaultFailStop:    defaultGUIFailStop,
+			MinRatePerSec:      tester.MinRatePerSec,
+			MaxRatePerSec:      tester.MaxRatePerSec,
+			MaxHoldSec:         int(tester.MaxConnectionHold.Seconds()),
+			Version:            version,
 		},
 	}
 }

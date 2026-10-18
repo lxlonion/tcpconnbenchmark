@@ -1235,7 +1235,7 @@
       <div class="control duration">
         <div class="field-label"><label for="duration">测试时长</label></div>
         <div class="number-wrap">
-          <input id="duration" type="number" min="1" max="86400" step="1" value="60" inputmode="numeric" aria-label="测试时长（秒）">
+          <input id="duration" type="number" min="1" max="86400" step="1" inputmode="numeric" aria-label="测试时长（秒）">
           <span class="unit">秒</span>
         </div>
       </div>
@@ -1243,7 +1243,7 @@
       <div class="control rate">
         <div class="field-label"><label for="rate">发起速率</label></div>
         <div class="number-wrap">
-          <input id="rate" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" value="125" autocomplete="off" spellcheck="false" aria-label="每秒发起连接次数">
+          <input id="rate" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" spellcheck="false" aria-label="每秒发起连接次数">
           <span class="unit">次/秒</span>
         </div>
       </div>
@@ -1251,13 +1251,13 @@
       <div class="control failstop">
         <div class="field-label"><label for="failStop">失败停止</label></div>
         <div class="number-wrap">
-          <input id="failStop" type="number" min="0" max="10000000" step="1" value="50" inputmode="numeric" aria-label="累计失败多少次后停止">
+          <input id="failStop" type="number" min="0" max="10000000" step="1" inputmode="numeric" aria-label="累计失败多少次后停止">
           <span class="unit">次</span>
         </div>
       </div>
 
       <div class="control domains">
-        <div class="field-label"><span>测试域名</span><span class="label-note">内置 84 个</span></div>
+        <div class="field-label"><span>测试域名</span><span class="label-note" id="builtinCountLabel">内置 — 个</span></div>
         <button type="button" class="domain-button" id="editDomains" title="编辑测试域名">
           <svg class="layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="m12 3 9 5-9 5-9-5 9-5Z"></path>
@@ -1465,7 +1465,7 @@
         <span class="count-ok" id="domainValidCount">加载中…</span>
         <span id="domainInvalidCount"></span>
         <span class="spacer"></span>
-        <button type="button" class="mini-button" id="resetDomains">恢复内置 84 个</button>
+        <button type="button" class="mini-button" id="resetDomains">恢复内置 — 个</button>
         <button type="button" class="mini-button" id="clearDomains">清空</button>
       </div>
       <textarea id="domainInput" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="测试域名列表"></textarea>
@@ -1501,6 +1501,7 @@
     rate: $("rate"),
     failStop: $("failStop"),
     domainCount: $("domainCount"),
+    builtinCountLabel: $("builtinCountLabel"),
     editDomains: $("editDomains"),
     startBtn: $("startBtn"),
     rateHint: $("rateHint"),
@@ -1574,6 +1575,8 @@
     domains: [],
     logDir: "",
     defaultRate: 125,
+    defaultDuration: 60,
+    defaultFailStop: 50,
     minRate: 1,
     maxRate: 1000,
     maxHold: 60,
@@ -1585,6 +1588,7 @@
     entries: [],
     received: 0,
     filter: "all",
+    renderedFilter: "all",
     running: false,
     stopping: false,
     finished: false,
@@ -1667,12 +1671,12 @@
 
   function currentDurationInput() {
     const value = Number.parseInt(el.duration.value, 10);
-    return Number.isFinite(value) ? value : 60;
+    return Number.isFinite(value) ? value : state.defaultDuration;
   }
 
   function currentFailStopInput() {
     const value = Number.parseInt(el.failStop.value, 10);
-    return Number.isFinite(value) ? value : 0;
+    return Number.isFinite(value) ? value : state.defaultFailStop;
   }
 
   function currentRateInput() {
@@ -1753,6 +1757,10 @@
     el.editDomains.title = state.domains.length
       ? "编辑测试域名（当前 " + state.domains.length + " 个）"
       : "添加测试域名";
+    if (state.builtins.length > 0) {
+      setText(el.builtinCountLabel, "内置 " + fmtInt(state.builtins.length) + " 个");
+      setText(el.resetDomains, "恢复内置 " + fmtInt(state.builtins.length) + " 个");
+    }
   }
 
   function parseDomainToken(raw) {
@@ -2089,21 +2097,15 @@
     el.logHeader.style.paddingRight = width + "px";
   }
 
-  function renderLog() {
-    const previousTop = el.logScroll.scrollTop;
-    const entries = state.entries;
-    const filtered = entries.filter((entry) => {
-      if (state.filter === "success") return entry.ok;
-      if (state.filter === "fail") return !entry.ok && !entry.aborted;
-      if (state.filter === "aborted") return Boolean(entry.aborted);
-      return true;
-    });
-    const visible = filtered.slice(-500);
-    const fragment = document.createDocumentFragment();
-    for (const entry of visible) fragment.appendChild(buildLogRow(entry));
-    el.logBody.replaceChildren(fragment);
+  function matchesLogFilter(entry, filter) {
+    if (filter === "success") return entry.ok;
+    if (filter === "fail") return !entry.ok && !entry.aborted;
+    if (filter === "aborted") return Boolean(entry.aborted);
+    return true;
+  }
 
-    const hasRows = visible.length > 0;
+  function syncLogChrome() {
+    const hasRows = el.logBody.childElementCount > 0;
     el.logHeader.hidden = !hasRows;
     el.logTable.hidden = !hasRows;
     el.logEmpty.hidden = hasRows;
@@ -2111,7 +2113,7 @@
     if (!hasRows) {
       const title = el.logEmpty.querySelector("h3");
       const text = el.logEmpty.querySelector("p");
-      if (entries.length === 0) {
+      if (state.entries.length === 0) {
         title.textContent = "等待连接记录";
         text.textContent = "开始测试后，每次 TCP 握手的结果、耗时和失败原因都会实时显示在这里。";
       } else {
@@ -2119,8 +2121,10 @@
         text.textContent = "当前筛选条件下暂无连接记录，可切换到“全部”查看。";
       }
     }
-    setText(el.logCounter, fmtInt(visible.length) + " 条");
+    setText(el.logCounter, fmtInt(el.logBody.childElementCount) + " 条");
+  }
 
+  function scrollLog(previousTop) {
     if (el.autoScroll.checked) {
       window.requestAnimationFrame(() => {
         el.logScroll.scrollTop = el.logScroll.scrollHeight;
@@ -2128,6 +2132,38 @@
     } else {
       el.logScroll.scrollTop = previousTop;
     }
+  }
+
+  function renderLog() {
+    const previousTop = el.logScroll.scrollTop;
+    const visible = state.entries
+      .filter((entry) => matchesLogFilter(entry, state.filter))
+      .slice(-500);
+    const fragment = document.createDocumentFragment();
+    for (const entry of visible) fragment.appendChild(buildLogRow(entry));
+    el.logBody.replaceChildren(fragment);
+    state.renderedFilter = state.filter;
+    syncLogChrome();
+    scrollLog(previousTop);
+  }
+
+  function appendLogRows(entries) {
+    const fresh = entries.filter((entry) => matchesLogFilter(entry, state.filter));
+    if (fresh.length === 0) {
+      syncLogChrome();
+      return;
+    }
+    const previousTop = el.logScroll.scrollTop;
+    const fragment = document.createDocumentFragment();
+    for (const entry of fresh) fragment.appendChild(buildLogRow(entry));
+    el.logBody.appendChild(fragment);
+    let excess = el.logBody.childElementCount - 500;
+    while (excess > 0) {
+      el.logBody.removeChild(el.logBody.firstElementChild);
+      excess--;
+    }
+    syncLogChrome();
+    scrollLog(previousTop);
   }
 
   function appendLogs(logs) {
@@ -2154,7 +2190,7 @@
   }
 
   async function pollOnce() {
-    if (state.pollInFlight) return;
+    if (state.pollInFlight || document.hidden) return;
     state.pollInFlight = true;
     try {
       const since = state.session ? state.since : 0;
@@ -2180,7 +2216,13 @@
         showToast("界面日志刷新过快，部分记录已省略；完整日志仍会写入文件。", "warn", 4500);
       }
 
-      if (appendLogs(result.logs)) renderLog();
+      if (appendLogs(result.logs)) {
+        if (state.renderedFilter !== state.filter) {
+          renderLog();
+        } else {
+          appendLogRows(result.logs);
+        }
+      }
       renderSnapshot(snapshot);
 
       if (snapshot.finished && snapshot.hasEngine) {
@@ -2313,6 +2355,10 @@
 
   async function boot() {
     // Static events are available immediately, even before Go bindings answer.
+    el.duration.value = String(state.defaultDuration);
+    el.rate.value = String(state.defaultRate);
+    el.failStop.value = String(state.defaultFailStop);
+
     document.querySelectorAll(".mode-btn").forEach((button) => {
       button.addEventListener("click", () => {
         if (button.disabled) return;
@@ -2363,6 +2409,9 @@
       if (distance > 100) el.autoScroll.checked = false;
     }, { passive: true });
     window.addEventListener("resize", syncLogScrollbar);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) pollOnce();
+    });
 
     el.editDomains.addEventListener("click", openDomainModal);
     el.closeDomainModal.addEventListener("click", closeDomainModal);
@@ -2413,9 +2462,15 @@
       state.domains = state.builtins.slice();
       state.logDir = data.logDir || "";
       state.defaultRate = Number(data.defaultRatePerSec) || 125;
+      state.defaultDuration = Number(data.defaultDurationSec) || state.defaultDuration;
+      if (Number.isFinite(Number(data.defaultFailStop))) {
+        state.defaultFailStop = Number(data.defaultFailStop);
+      }
       state.minRate = Number(data.minRatePerSec) || 1;
       state.maxRate = Number(data.maxRatePerSec) || 1000;
       el.rate.value = String(state.defaultRate);
+      el.duration.value = String(state.defaultDuration);
+      el.failStop.value = String(state.defaultFailStop);
       state.maxHold = Number(data.maxHoldSec) || 60;
       state.version = data.version || "";
       state.fd = data.fdLimit || null;
