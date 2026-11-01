@@ -6,7 +6,7 @@ LDFLAGS := -s -w
 .PHONY: build app run test vet clean
 
 build:
-	CGO_ENABLED=1 go build $(GOFLAGS) -trimpath -ldflags "$(LDFLAGS)" -o $(BINARY) .
+	CGO_ENABLED=0 go build $(GOFLAGS) -trimpath -ldflags "$(LDFLAGS)" -o $(BINARY) .
 
 app: build
 	@if [ "$$(uname -s)" != "Darwin" ]; then echo "make app 仅支持 macOS"; exit 1; fi
@@ -18,13 +18,13 @@ app: build
 	@echo "已生成 $(APP)，运行: open $(APP)"
 
 run:
-	go run .
+	CGO_ENABLED=0 go run .
 
 test:
-	go test ./...
+	CGO_ENABLED=0 go test ./...
 
 vet:
-	go vet ./...
+	CGO_ENABLED=0 go vet ./...
 
 clean:
 	rm -rf $(BINARY) $(APP)

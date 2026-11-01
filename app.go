@@ -1,23 +1,17 @@
 package main
 
 import (
-	_ "embed"
-	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
 	"runtime"
-	"strings"
 	"sync"
 
-	"github.com/webview/webview_go"
+	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/ui"
 
 	"tcplink/internal/syslimit"
 	"tcplink/internal/tester"
 )
-
-//go:embed web/index.html
-var indexHTML string
 
 const (
 	version            = "1.0.0"
@@ -26,61 +20,81 @@ const (
 )
 
 type bootstrapData struct {
-	Domains            []string               `json:"domains"`
-	Interfaces         []tester.InterfaceInfo `json:"interfaces"`
-	LogDir             string                 `json:"logDir"`
-	FDLimit            syslimit.Info          `json:"fdLimit"`
-	DefaultRatePerSec  int                    `json:"defaultRatePerSec"`
-	DefaultDurationSec int                    `json:"defaultDurationSec"`
-	DefaultFailStop    int                    `json:"defaultFailStop"`
-	MinRatePerSec      int                    `json:"minRatePerSec"`
-	MaxRatePerSec      int                    `json:"maxRatePerSec"`
-	MaxHoldSec         int                    `json:"maxHoldSec"`
-	Version            string                 `json:"version"`
+	Domains            []string
+	Interfaces         []tester.InterfaceInfo
+	LogDir             string
+	FDLimit            syslimit.Info
+	DefaultRatePerSec  int
+	DefaultDurationSec int
+	DefaultFailStop    int
+	MinRatePerSec      int
+	MaxRatePerSec      int
+	MaxHoldSec         int
+	Version            string
 }
 
 type startRequest struct {
-	Mode        tester.Mode `json:"mode"`
-	Interface   string      `json:"interface"`
-	Domains     []string    `json:"domains"`
-	DurationSec int         `json:"durationSec"`
-	FailStop    int         `json:"failStop"`
-	RatePerSec  int         `json:"ratePerSec"`
+	Mode        tester.Mode
+	Interface   string
+	Domains     []string
+	DurationSec int
+	FailStop    int
+	RatePerSec  int
 }
 
-type apiResult struct {
-	OK        bool   `json:"ok"`
-	Error     string `json:"error,omitempty"`
-	SessionID string `json:"sessionId,omitempty"`
-	LogPath   string `json:"logPath,omitempty"`
+type result[T any] struct {
+	Value T
+	Err   error
 }
 
-type pollResult struct {
-	OK      bool              `json:"ok"`
-	Error   string            `json:"error,omitempty"`
-	State   tester.Snapshot   `json:"snapshot"`
-	Logs    []tester.LogEntry `json:"logs"`
-	Dropped bool              `json:"dropped"`
+type sampleData struct {
+	State   tester.Snapshot
+	Logs    []tester.LogEntry
+	Dropped bool
+	NextSeq uint64
 }
 
-// App holds the single running test and exposes it to the embedded UI.
+type guiController interface {
+	Bootstrap() bootstrapData
+	Start(startRequest) <-chan result[tester.Snapshot]
+	Stop(sessionID string) <-chan result[struct{}]
+	Sample(sessionID string, since uint64) <-chan result[sampleData]
+	Interfaces() <-chan result[[]tester.InterfaceInfo]
+	OpenLogs() <-chan result[struct{}]
+	Tail(sessionID string) (uint64, error)
+	Shutdown() <-chan struct{}
+}
+
+// engine exposes just the engine operations needed by the controller. The
+// factory is injectable so lifecycle races can be tested without network I/O.
+type engine interface {
+	Start()
+	Stop(string)
+	Wait()
+	Finished() bool
+	Snapshot() tester.Snapshot
+	LogsSince(uint64, int) ([]tester.LogEntry, bool)
+}
+
 type App struct {
 	mu        sync.Mutex
-	engine    *tester.Engine
-	fdInfo    syslimit.Info
-	logDir    string
+	engine    engine
+	sessionID string
+	starting  bool
+	closing   bool
+	jobs      sync.WaitGroup
+	done      chan struct{}
 	bootstrap bootstrapData
-	win       webview.WebView
+	newEngine func(tester.Config) (engine, error)
 }
 
 func newApp(fdInfo syslimit.Info) *App {
-	logDir, err := tester.LogDirectory()
-	if err != nil {
-		logDir = ""
-	}
+	logDir, _ := tester.LogDirectory()
 	return &App{
-		fdInfo: fdInfo,
-		logDir: logDir,
+		done: make(chan struct{}),
+		newEngine: func(cfg tester.Config) (engine, error) {
+			return tester.New(cfg)
+		},
 		bootstrap: bootstrapData{
 			Domains:            append([]string(nil), tester.BuiltinDomains...),
 			Interfaces:         tester.ListInterfaces(),
@@ -98,161 +112,238 @@ func newApp(fdInfo syslimit.Info) *App {
 }
 
 func (a *App) run() error {
-	debug := os.Getenv("TCPLINK_DEBUG") == "1"
-	win := webview.New(debug)
-	defer win.Destroy()
-	a.win = win
-	win.SetTitle("TCPLink · TCP 并发连接测试")
-	win.SetSize(1180, 780, webview.HintNone)
-
-	bindings := []struct {
-		name string
-		fn   any
-	}{
-		{"tcpBootstrap", a.bootstrapJSON},
-		{"tcpStart", a.start},
-		{"tcpStop", a.stop},
-		{"tcpPoll", a.poll},
-		{"tcpInterfaces", a.interfaces},
-		{"tcpOpenLogs", a.openLogs},
-	}
-	for _, binding := range bindings {
-		if err := win.Bind(binding.name, binding.fn); err != nil {
-			return fmt.Errorf("绑定界面接口 %s 失败: %w", binding.name, err)
-		}
-	}
-
-	win.SetHtml(indexHTML)
-	win.Run()
-
-	a.shutdown()
-	return nil
-}
-
-func (a *App) shutdown() {
-	a.mu.Lock()
-	engine := a.engine
-	a.mu.Unlock()
-	if engine != nil && !engine.Finished() {
-		engine.Stop("程序关闭")
-		engine.Wait()
-	}
-}
-
-func (a *App) bootstrapJSON() string {
-	a.mu.Lock()
-	data := a.bootstrap
-	a.mu.Unlock()
-	raw, _ := json.Marshal(data)
-	return string(raw)
-}
-
-func (a *App) start(configJSON string) string {
-	var req startRequest
-	if err := json.Unmarshal([]byte(configJSON), &req); err != nil {
-		return errorJSON("参数解析失败: %v", err)
-	}
-
-	a.mu.Lock()
-	if a.engine != nil && !a.engine.Finished() {
-		a.mu.Unlock()
-		return errorJSON("当前已有测试正在运行")
-	}
-	engine, err := tester.New(tester.Config{
-		Mode:        req.Mode,
-		Interface:   req.Interface,
-		Domains:     req.Domains,
-		DurationSec: req.DurationSec,
-		FailStop:    req.FailStop,
-		RatePerSec:  req.RatePerSec,
-	})
-	if err != nil {
-		a.mu.Unlock()
-		return errorJSON("%s", err.Error())
-	}
-	a.engine = engine
-	engine.Start()
-	snap := engine.Snapshot()
-	a.mu.Unlock()
-
-	raw, _ := json.Marshal(apiResult{OK: true, SessionID: snap.SessionID, LogPath: snap.LogPath})
-	return string(raw)
-}
-
-func (a *App) stop() string {
-	a.mu.Lock()
-	engine := a.engine
-	a.mu.Unlock()
-	if engine == nil {
-		return errorJSON("当前没有正在运行的测试")
-	}
-	if engine.Finished() {
-		raw, _ := json.Marshal(apiResult{OK: true})
-		return string(raw)
-	}
-	engine.Stop("手动停止")
-	raw, _ := json.Marshal(apiResult{OK: true})
-	return string(raw)
-}
-
-func (a *App) poll(since int64) string {
-	if since < 0 {
-		since = 0
-	}
-	a.mu.Lock()
-	engine := a.engine
-	a.mu.Unlock()
-
-	if engine == nil {
-		raw, _ := json.Marshal(pollResult{
-			OK:    true,
-			State: tester.Snapshot{HasEngine: false},
-			Logs:  []tester.LogEntry{},
+	view := newNativeView(a)
+	mygo.App.WhenReady(func() {
+		win := mygo.NewWindow(mygo.WindowOptions{
+			Title: "TCPLink · TCP 并发连接测试", Width: 1180, Height: 780,
+			MinWidth: 900, MinHeight: 650, Content: ui.View(view.view),
 		})
-		return string(raw)
-	}
-
-	logs, dropped := engine.LogsSince(uint64(since), 400)
-	if logs == nil {
-		logs = []tester.LogEntry{}
-	}
-	raw, err := json.Marshal(pollResult{
-		OK:      true,
-		State:   engine.Snapshot(),
-		Logs:    logs,
-		Dropped: dropped,
+		view.attach(win)
+		win.OnClose(func(event *mygo.CloseEvent) {
+			if !view.canClose() {
+				event.PreventDefault()
+				view.requestClose()
+			}
+		})
+		mygo.App.OnBeforeQuit(func(event *mygo.QuitEvent) {
+			if !view.canClose() {
+				event.PreventDefault()
+				view.requestClose()
+			}
+		})
 	})
-	if err != nil {
-		return errorJSON("读取状态失败: %v", err)
-	}
-	return string(raw)
+	err := mygo.App.Run()
+	<-a.Shutdown()
+	return err
 }
 
-func (a *App) interfaces() string {
-	raw, _ := json.Marshal(struct {
-		OK         bool                   `json:"ok"`
-		Interfaces []tester.InterfaceInfo `json:"interfaces"`
-	}{
-		OK:         true,
-		Interfaces: tester.ListInterfaces(),
-	})
-	return string(raw)
+func cloneInterfaces(src []tester.InterfaceInfo) []tester.InterfaceInfo {
+	dst := append([]tester.InterfaceInfo(nil), src...)
+	for i := range dst {
+		dst[i].IPv4 = append([]string(nil), dst[i].IPv4...)
+	}
+	return dst
 }
 
-func (a *App) openLogs() string {
-	dir := a.logDir
-	if dir == "" {
-		var err error
-		dir, err = tester.LogDirectory()
+func (a *App) Bootstrap() bootstrapData {
+	data := a.bootstrap
+	data.Domains = append([]string(nil), data.Domains...)
+	data.Interfaces = cloneInterfaces(data.Interfaces)
+	return data
+}
+
+// reply creates a buffered, single-result channel even for immediate errors.
+func reply[T any](value T, err error) <-chan result[T] {
+	ch := make(chan result[T], 1)
+	ch <- result[T]{Value: value, Err: err}
+	close(ch)
+	return ch
+}
+
+func (a *App) Start(req startRequest) <-chan result[tester.Snapshot] {
+	req.Domains = append([]string(nil), req.Domains...)
+	a.mu.Lock()
+	if a.closing {
+		a.mu.Unlock()
+		return reply(tester.Snapshot{}, fmt.Errorf("程序正在关闭"))
+	}
+	if a.starting || (a.engine != nil && !a.engine.Finished()) {
+		a.mu.Unlock()
+		return reply(tester.Snapshot{}, fmt.Errorf("当前已有测试正在运行"))
+	}
+	a.starting = true
+	a.jobs.Add(1)
+	a.mu.Unlock()
+
+	ch := make(chan result[tester.Snapshot], 1)
+	go func() {
+		defer a.jobs.Done()
+		defer close(ch)
+		e, err := a.newEngine(tester.Config{
+			Mode: req.Mode, Interface: req.Interface, Domains: req.Domains,
+			DurationSec: req.DurationSec, FailStop: req.FailStop, RatePerSec: req.RatePerSec,
+		})
 		if err != nil {
-			return errorJSON("%s", err.Error())
+			a.mu.Lock()
+			a.starting = false
+			a.mu.Unlock()
+			ch <- result[tester.Snapshot]{Err: err}
+			return
 		}
+		e.Start()
+		snap := e.Snapshot()
+		a.mu.Lock()
+		a.engine, a.sessionID, a.starting = e, snap.SessionID, false
+		closing := a.closing
+		a.mu.Unlock()
+		if closing {
+			e.Stop("程序关闭")
+		}
+		ch <- result[tester.Snapshot]{Value: snap}
+	}()
+	return ch
+}
+
+// sessionJob captures an engine and registers its work atomically with shutdown.
+func (a *App) sessionJob(sessionID string) (engine, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closing {
+		return nil, fmt.Errorf("程序正在关闭")
 	}
-	if err := openInFileManager(dir); err != nil {
-		return errorJSON("打开日志目录失败: %v", err)
+	if a.engine == nil || sessionID == "" || sessionID != a.sessionID {
+		return nil, fmt.Errorf("测试会话不存在或已更换")
 	}
-	raw, _ := json.Marshal(apiResult{OK: true})
-	return string(raw)
+	a.jobs.Add(1)
+	return a.engine, nil
+}
+
+func (a *App) Stop(sessionID string) <-chan result[struct{}] {
+	e, err := a.sessionJob(sessionID)
+	if err != nil {
+		return reply(struct{}{}, err)
+	}
+	ch := make(chan result[struct{}], 1)
+	go func() {
+		defer a.jobs.Done()
+		defer close(ch)
+		if !e.Finished() {
+			e.Stop("手动停止")
+		}
+		ch <- result[struct{}]{}
+	}()
+	return ch
+}
+
+func (a *App) Sample(sessionID string, since uint64) <-chan result[sampleData] {
+	e, err := a.sessionJob(sessionID)
+	if err != nil {
+		return reply(sampleData{}, err)
+	}
+	ch := make(chan result[sampleData], 1)
+	go func() {
+		defer a.jobs.Done()
+		defer close(ch)
+		snap := e.Snapshot()
+		logs, dropped := e.LogsSince(since, 400)
+		next := since
+		for _, entry := range logs {
+			if entry.Seq > next {
+				next = entry.Seq
+			}
+		}
+		ch <- result[sampleData]{Value: sampleData{State: snap, Logs: logs, Dropped: dropped, NextSeq: next}}
+	}()
+	return ch
+}
+
+func (a *App) Tail(sessionID string) (uint64, error) {
+	e, err := a.sessionJob(sessionID)
+	if err != nil {
+		return 0, err
+	}
+	defer a.jobs.Done()
+	logs, _ := e.LogsSince(0, 1)
+	if len(logs) == 0 {
+		return 0, nil
+	}
+	return logs[len(logs)-1].Seq, nil
+}
+
+func (a *App) registerJob() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closing {
+		return false
+	}
+	a.jobs.Add(1)
+	return true
+}
+
+func (a *App) Interfaces() <-chan result[[]tester.InterfaceInfo] {
+	if !a.registerJob() {
+		return reply([]tester.InterfaceInfo(nil), fmt.Errorf("程序正在关闭"))
+	}
+	ch := make(chan result[[]tester.InterfaceInfo], 1)
+	go func() {
+		defer a.jobs.Done()
+		defer close(ch)
+		ch <- result[[]tester.InterfaceInfo]{Value: tester.ListInterfaces()}
+	}()
+	return ch
+}
+
+func (a *App) OpenLogs() <-chan result[struct{}] {
+	if !a.registerJob() {
+		return reply(struct{}{}, fmt.Errorf("程序正在关闭"))
+	}
+	ch := make(chan result[struct{}], 1)
+	go func() {
+		defer a.jobs.Done()
+		defer close(ch)
+		dir := a.bootstrap.LogDir
+		var err error
+		if dir == "" {
+			dir, err = tester.LogDirectory()
+		}
+		if err == nil {
+			err = openInFileManager(dir)
+			if err != nil {
+				err = fmt.Errorf("打开日志目录失败: %w", err)
+			}
+		}
+		ch <- result[struct{}]{Err: err}
+	}()
+	return ch
+}
+
+func (a *App) Shutdown() <-chan struct{} {
+	a.mu.Lock()
+	if a.closing {
+		a.mu.Unlock()
+		return a.done
+	}
+	a.closing = true
+	e := a.engine
+	a.mu.Unlock()
+	go func() {
+		if e != nil && !e.Finished() {
+			e.Stop("程序关闭")
+		}
+		// A pending Start may create a new engine after the capture above.
+		a.jobs.Wait()
+		a.mu.Lock()
+		e = a.engine
+		a.mu.Unlock()
+		if e != nil {
+			if !e.Finished() {
+				e.Stop("程序关闭")
+			}
+			e.Wait()
+		}
+		close(a.done)
+	}()
+	return a.done
 }
 
 func openInFileManager(path string) error {
@@ -270,9 +361,4 @@ func openInFileManager(path string) error {
 	}
 	go func() { _ = cmd.Wait() }()
 	return nil
-}
-
-func errorJSON(format string, args ...any) string {
-	raw, _ := json.Marshal(apiResult{OK: false, Error: strings.TrimSpace(fmt.Sprintf(format, args...))})
-	return string(raw)
 }

@@ -1,6 +1,6 @@
 # TCPLink
 
-一个使用 Go 编写的 TCP 并发连接测试工具。图形界面、测试引擎和日志模块编译在同一个可执行文件中，网页界面直接嵌入二进制，通过 WebView 进程内绑定与 Go 通信，不启动本地 HTTP 服务，也没有独立的前端工程。
+一个使用 Go 编写的 TCP 并发连接测试工具。图形界面使用 [MyGo Native UI](https://github.com/egoist/mygo/blob/main/docs/ui/README.md)（`github.com/egoist/mygo/ui`），由 Go 代码构建并通过 GPU 绘制，与测试引擎和日志模块编译在同一个可执行文件中。不使用 WebView、HTML、JavaScript 或 JSON IPC，也无需独立的前端工程或本地 HTTP 服务。
 
 > TCPLink 只完成 IPv4 解析和 TCP 三次握手。连接建立后不发送 HTTP 请求、不进行 TLS 握手、不传输网页数据。
 
@@ -10,7 +10,7 @@
 - 出口网卡选择：自动使用系统默认路由，或绑定到指定网卡。
 - 测试模式：`TCP 80`、`TCP 443`、`TCP 80 + 443`。双端口模式下每个域名依次测试 80 和 443。
 - 发起速率可调：文字输入框，单位次/秒，默认 125，范围 1–1000。
-- 84 个内置国内常用网站域名，可在界面中编辑、追加或完全替换为自定义域名。
+- 84 个内置国内常用网站域名，可在界面中编辑、追加、完全替换为自定义域名或恢复默认。
 - 支持直接粘贴网址，自动提取主机名；支持 IPv4 字面量；支持国际化域名（自动转为 punycode）。
 - 可设置测试时长（1–86400 秒）和累计失败停止次数（0 表示不限制）。
 - 达到时长、失败上限或手动停止后，关闭所有连接并自动保存日志。
@@ -34,10 +34,12 @@
 
 ### 环境要求
 
-- Go 1.26 或更高版本。
-- macOS：Xcode Command Line Tools（`xcode-select --install`）。
-- Linux：GTK 3 和 WebKitGTK 开发包。`webview_go` 当前使用 `pkg-config` 查找 `gtk+-3.0` 和 `webkit2gtk-4.0`；只提供 `webkit2gtk-4.1` 的发行版需要自行提供兼容的 pkg-config 名称。
-- Windows：WebView2 Runtime 和 C 编译器（CGO）。Windows 构建尚未实测。
+- 构建需要 Go 1.27.3 或更高版本，禁用 CGO；无需 C 编译器、Bun 或 Node.js。
+- macOS 12 或更高版本：Native UI 使用 Metal；打包 `.app` 需要 macOS 上的 `codesign`。
+- Linux（x64、arm64）：运行时需要 GTK 3 库，Native UI 使用 OpenGL；不需要 WebKitGTK。
+- Windows 10 或 11（x64、arm64）：Native UI 使用 Direct3D 11，不需要 WebView2 Runtime。
+
+以上系统要求参考 [MyGo 文档](https://github.com/egoist/mygo/blob/main/docs/README.md#requirements)，不代表本项目已经在每种系统和架构上实测。
 
 ### macOS
 
@@ -54,12 +56,12 @@ make app
 open TCPLink.app
 ```
 
-`make app` 会进行 ad-hoc 签名（`codesign --sign -`），适合本地使用；对外分发需要你自己的开发者签名和公证。
+`make app` 会尝试进行 ad-hoc 签名（`codesign --sign -`）；签名失败不会中止打包。对外分发需要你自己的开发者签名和公证。
 
 ### 其他平台
 
 ```bash
-go build -trimpath -o TCPLink .
+CGO_ENABLED=0 go build -trimpath -o TCPLink .
 ```
 
 ### 命令行模式
@@ -98,7 +100,7 @@ go build -trimpath -o TCPLink .
 - `tcp-test-<时间>.csv`：每次完成的连接尝试一行，包含时间、域名、IPv4、端口、结果、耗时和错误原因。结果列为 `success`、`failed` 或 `aborted`；测试停止时仍在拨号的连接也会写入一行 `aborted`。文件带 UTF-8 BOM，便于 Excel 打开。
 - `tcp-test-<时间>.summary.txt`：配置、最终统计、停止原因、完整域名列表和文件路径。
 
-CSV 每秒至少刷新一次；停止和退出时会强制刷新并同步到磁盘。界面实时日志只保留最近 500 条，可按“全部 / 成功 / 失败 / 中止”筛选，完整记录以文件为准。底部“打开目录”按钮可直接在 Finder/资源管理器中打开日志目录。
+CSV 每秒至少刷新一次；停止和退出时会强制刷新并同步到磁盘。界面约每 200 毫秒读取一次快照，实时日志缓冲显示最近 600 条，支持按“全部 / 成功 / 失败 / 中止”筛选和自动跟随。清空只影响视图；完整 CSV 和摘要不受界面筛选或裁剪影响。
 
 ## 常见问题
 
@@ -129,8 +131,9 @@ CSV 每秒至少刷新一次；停止和退出时会强制刷新并同步到磁�
 ## 开发
 
 ```bash
-go test ./...
-go vet ./...
+CGO_ENABLED=0 go run .
+CGO_ENABLED=0 go test ./...
+CGO_ENABLED=0 go vet ./...
 ```
 
 测试覆盖内置域名数量（必须为 84）、域名规范化、模式端口展开、内存日志环形缓冲，以及引擎的时长/失败停止计数、连接关闭和成功/中止日志完整性。

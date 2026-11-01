@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"runtime"
 	"strings"
 
 	"tcplink/internal/syslimit"
@@ -12,10 +11,6 @@ import (
 )
 
 func main() {
-	// The webview backend must run on the main OS thread, especially on
-	// macOS.
-	runtime.LockOSThread()
-
 	fdInfo := syslimit.Raise(tester.FDSoftLimitTarget)
 	if fdInfo.Error != "" {
 		fmt.Fprintf(os.Stderr, "提示: %s\n", fdInfo.Error)
