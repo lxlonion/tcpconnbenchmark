@@ -185,4 +185,10 @@ CGO_ENABLED=0 go vet ./...
 
 测试覆盖内置域名数量（必须为 84）、域名规范化、模式端口展开、内存日志环形缓冲，以及引擎的时长/失败停止计数、连接关闭和成功/中止日志完整性。
 
+### 自动检查与发布
+
+GitHub Actions 会在推送到 `main` 或创建、更新 Pull Request 时检查 Go 格式，并在 Linux、macOS、Windows 上构建、运行测试和 `go vet`；Linux 还会运行 race detector。检查使用 `go.mod` 指定的 Go 版本。
+
+推送正式版本标签（例如 `v1.2.3`）后，发布工作流会先验证代码，再构建 Linux、Windows 和 macOS 的 x64、arm64 产物，附带 SHA256 校验文件发布到 GitHub Releases。macOS `.app` 仅做尽力而为的 ad-hoc 签名，未使用 Apple 开发者证书签名或公证；Windows 产物也未做代码签名。跨架构构建成功不等于对应平台的图形界面已实测。
+
 请仅在工作负载和授权范围内使用本工具。对目标站点高频建立连接可能触发其防火墙、限流或审计策略。

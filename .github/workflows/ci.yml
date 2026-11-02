@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test and vet (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      CGO_ENABLED: '0'
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Download dependencies
+        run: go mod download
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          git ls-files -z -- '*.go' | xargs -0 -r gofmt -l > "$RUNNER_TEMP/unformatted-go-files"
+          cat "$RUNNER_TEMP/unformatted-go-files"
+          test ! -s "$RUNNER_TEMP/unformatted-go-files"
+      - name: Vet
+        run: go vet ./...
+        env:
+          GOPROXY: off
+          GOSUMDB: off
+      - name: Build
+        run: go build ./...
+        env:
+          GOPROXY: off
+          GOSUMDB: off
+      - name: Test
+        run: go test -count=1 ./...
+        env:
+          GOPROXY: off
+          GOSUMDB: off
+
+  race:
+    name: Race detector (Linux)
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: '1'
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Download dependencies
+        run: go mod download
+      - name: Test with race detector
+        run: go test -race -count=1 ./...
+        env:
+          GOPROXY: off
+          GOSUMDB: off

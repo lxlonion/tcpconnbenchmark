@@ -1,0 +1,134 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      stable: ${{ steps.tag.outputs.stable }}
+    steps:
+      - id: tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo 'stable=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'stable=false' >> "$GITHUB_OUTPUT"
+          fi
+
+  checks:
+    needs: validate
+    if: needs.validate.outputs.stable == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Test
+        run: make test
+      - name: Vet
+        run: make vet
+
+  build:
+    needs: checks
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: linux, arch: amd64, runner: ubuntu-latest }
+          - { os: linux, arch: arm64, runner: ubuntu-latest }
+          - { os: windows, arch: amd64, runner: ubuntu-latest }
+          - { os: windows, arch: arm64, runner: ubuntu-latest }
+          - { os: darwin, arch: amd64, runner: macos-15-intel }
+          - { os: darwin, arch: arm64, runner: macos-15 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Verify release metadata
+        env:
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "$TAG^{commit}")"
+          test -z "$(git status --porcelain --untracked-files=normal)"
+          # Match buildmeta's full stable-tag syntax, not just the trigger syntax.
+          stable_tags=$(git tag --points-at HEAD | grep -E '^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$' || true)
+          if [[ "$stable_tags" != "$TAG" ]]; then
+            echo "::error::Expected $TAG to be the only stable tag on HEAD; found: $stable_tags"
+            exit 1
+          fi
+      - name: Build and package
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/stage"
+          out="$RUNNER_TEMP/release"
+          mkdir -p "$stage" "$out"
+          name="tcpconnbenchmark-${TAG}-${GOOS}-${GOARCH}"
+          if [[ "$GOOS" == darwin ]]; then
+            make app BINARY="$stage/tcpconnbenchmark" APP="$stage/tcpconnbenchmark.app"
+            ditto -c -k --sequesterRsrc --keepParent "$stage/tcpconnbenchmark.app" "$out/$name.zip"
+          elif [[ "$GOOS" == windows ]]; then
+            make build BINARY="$stage/tcpconnbenchmark.exe"
+            (cd "$stage" && zip -q "$out/$name.zip" tcpconnbenchmark.exe)
+          else
+            make build BINARY="$stage/tcpconnbenchmark"
+            tar -C "$stage" -czf "$out/$name.tar.gz" tcpconnbenchmark
+          fi
+          test -z "$(git status --porcelain --untracked-files=normal)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/release/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/release
+          merge-multiple: true
+      - name: Generate checksums and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/release"
+          shopt -s nullglob
+          files=(tcpconnbenchmark-*.tar.gz tcpconnbenchmark-*.zip)
+          test "${#files[@]}" -eq 6
+          sha256sum "${files[@]}" > SHA256SUMS
+          gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes "${files[@]}" SHA256SUMS
