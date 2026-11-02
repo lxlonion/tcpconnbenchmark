@@ -18,15 +18,15 @@ func TestFromExecutable(t *testing.T) {
 	tests := []struct {
 		name, executable, want string
 	}{
-		{"binary", filepath.Join(root, "bin", "TCPLink"), filepath.Join(root, "bin")},
+		{"binary", filepath.Join(root, "bin", "tcpconnbenchmark"), filepath.Join(root, "bin")},
 		{"spaces", filepath.Join(root, "with spaces", "TCP Link"), filepath.Join(root, "with spaces")},
-		{"app", filepath.Join(root, "TCPLink.app", "Contents", "MacOS", "TCPLink"), root},
-		{"app with spaces", filepath.Join(root, "My TCPLink.app", "Contents", "MacOS", "TCP Link"), root},
-		{"not an app", filepath.Join(root, "TCPLink", "Contents", "MacOS", "TCPLink"), filepath.Join(root, "TCPLink", "Contents", "MacOS")},
-		{"missing contents", filepath.Join(root, "TCPLink.app", "Other", "MacOS", "TCPLink"), filepath.Join(root, "TCPLink.app", "Other", "MacOS")},
-		{"missing macos", filepath.Join(root, "TCPLink.app", "Contents", "Other", "TCPLink"), filepath.Join(root, "TCPLink.app", "Contents", "Other")},
-		{"app suffix required", filepath.Join(root, "TCPLink.app.backup", "Contents", "MacOS", "TCPLink"), filepath.Join(root, "TCPLink.app.backup", "Contents", "MacOS")},
-		{"clean path", filepath.Join(root, "folder", "..", "TCPLink"), root},
+		{"app", filepath.Join(root, "tcpconnbenchmark.app", "Contents", "MacOS", "tcpconnbenchmark"), root},
+		{"app with spaces", filepath.Join(root, "My tcpconnbenchmark.app", "Contents", "MacOS", "TCP Link"), root},
+		{"not an app", filepath.Join(root, "tcpconnbenchmark", "Contents", "MacOS", "tcpconnbenchmark"), filepath.Join(root, "tcpconnbenchmark", "Contents", "MacOS")},
+		{"missing contents", filepath.Join(root, "tcpconnbenchmark.app", "Other", "MacOS", "tcpconnbenchmark"), filepath.Join(root, "tcpconnbenchmark.app", "Other", "MacOS")},
+		{"missing macos", filepath.Join(root, "tcpconnbenchmark.app", "Contents", "Other", "tcpconnbenchmark"), filepath.Join(root, "tcpconnbenchmark.app", "Contents", "Other")},
+		{"app suffix required", filepath.Join(root, "tcpconnbenchmark.app.backup", "Contents", "MacOS", "tcpconnbenchmark"), filepath.Join(root, "tcpconnbenchmark.app.backup", "Contents", "MacOS")},
+		{"clean path", filepath.Join(root, "folder", "..", "tcpconnbenchmark"), root},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -39,7 +39,7 @@ func TestFromExecutable(t *testing.T) {
 }
 
 func TestFromExecutableRejectsInvalidPaths(t *testing.T) {
-	for _, path := range []string{"", "TCPLink", filepath.Join("relative", "TCPLink"), string(filepath.Separator), string(filepath.Separator) + "bad\x00path", string(filepath.Separator) + "directory" + string(filepath.Separator)} {
+	for _, path := range []string{"", "tcpconnbenchmark", filepath.Join("relative", "tcpconnbenchmark"), string(filepath.Separator), string(filepath.Separator) + "bad\x00path", string(filepath.Separator) + "directory" + string(filepath.Separator)} {
 		if got, err := FromExecutable(path); err == nil {
 			t.Errorf("FromExecutable(%q) = %q, want error", path, got)
 		}
@@ -47,7 +47,7 @@ func TestFromExecutableRejectsInvalidPaths(t *testing.T) {
 }
 
 func TestDirectoryDoesNotCreateData(t *testing.T) {
-	const helperEnv = "TCPLINK_APPDIR_TEST_HELPER"
+	const helperEnv = "TCPCONNBENCHMARK_APPDIR_TEST_HELPER"
 	if expected := os.Getenv(helperEnv); expected != "" {
 		got, err := Directory()
 		if err != nil || !filepath.IsAbs(got) || got != expected {
@@ -69,7 +69,7 @@ func TestDirectoryDoesNotCreateData(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer src.Close()
-	copyPath := filepath.Join(dir, "TCPLink-test"+filepath.Ext(executable))
+	copyPath := filepath.Join(dir, "tcpconnbenchmark-test"+filepath.Ext(executable))
 	dst, err := os.OpenFile(copyPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o755)
 	if err != nil {
 		t.Fatal(err)
@@ -92,7 +92,7 @@ func TestDirectoryDoesNotCreateData(t *testing.T) {
 		t.Fatalf("helper: %v\n%s", err, output)
 	}
 	if runtime.GOOS != "windows" {
-		link := filepath.Join(t.TempDir(), "TCPLink-link")
+		link := filepath.Join(t.TempDir(), "tcpconnbenchmark-link")
 		if err := os.Symlink(copyPath, link); err != nil {
 			t.Fatal(err)
 		}

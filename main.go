@@ -6,9 +6,9 @@ import (
 	"os"
 	"strings"
 
-	"tcplink/internal/appdir"
-	"tcplink/internal/syslimit"
-	"tcplink/internal/tester"
+	"tcpconnbenchmark/internal/appdir"
+	"tcpconnbenchmark/internal/syslimit"
+	"tcpconnbenchmark/internal/tester"
 )
 
 func main() {
@@ -79,7 +79,7 @@ func main() {
 
 	app := newApp(fdInfo)
 	if err := app.run(); err != nil {
-		fmt.Fprintf(os.Stderr, "TCPLink 启动失败: %v\n", err)
+		fmt.Fprintf(os.Stderr, "tcpconnbenchmark 启动失败: %v\n", err)
 		os.Exit(1)
 	}
 }

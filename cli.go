@@ -7,7 +7,7 @@ import (
 	"syscall"
 	"time"
 
-	"tcplink/internal/tester"
+	"tcpconnbenchmark/internal/tester"
 )
 
 func runCLI(cfg tester.Config, save bool) error {
@@ -22,7 +22,7 @@ func runCLI(cfg tester.Config, save bool) error {
 	}()
 
 	snap := engine.Snapshot()
-	fmt.Println("TCPLink · TCP 并发连接测试（CLI）")
+	fmt.Println("tcpconnbenchmark · TCP 并发连接测试（CLI）")
 	fmt.Printf("模式: %s　出口网卡: %s　域名: %d 个\n", snap.ModeLabel, snap.InterfaceLabel, snap.DomainCount)
 	fmt.Printf("时长: %d 秒　失败停止: %s　发起速率: %d 次/秒\n", snap.DurationSec, failStopLabel(snap.FailStop), snap.RatePerSec)
 	fmt.Println("按 Ctrl+C 可提前停止；正在建立连接…")

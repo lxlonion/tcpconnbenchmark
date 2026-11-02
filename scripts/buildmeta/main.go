@@ -14,7 +14,7 @@ import (
 	"runtime"
 	"strings"
 
-	"tcplink/internal/buildinfo"
+	"tcpconnbenchmark/internal/buildinfo"
 )
 
 func git(dir string, args ...string) (string, error) {
@@ -56,11 +56,11 @@ func linkerFlags(base string, m buildinfo.Metadata) string {
 	if m.Revision == "" {
 		return base
 	}
-	return strings.TrimSpace(base + " -X tcplink/internal/buildinfo.injected=1" +
-		" -X tcplink/internal/buildinfo.branchHex=" + hex.EncodeToString([]byte(m.Branch)) +
-		" -X tcplink/internal/buildinfo.revision=" + m.Revision +
-		fmt.Sprintf(" -X tcplink/internal/buildinfo.dirty=%t", m.Dirty) +
-		" -X tcplink/internal/buildinfo.release=" + m.Release)
+	return strings.TrimSpace(base + " -X tcpconnbenchmark/internal/buildinfo.injected=1" +
+		" -X tcpconnbenchmark/internal/buildinfo.branchHex=" + hex.EncodeToString([]byte(m.Branch)) +
+		" -X tcpconnbenchmark/internal/buildinfo.revision=" + m.Revision +
+		fmt.Sprintf(" -X tcpconnbenchmark/internal/buildinfo.dirty=%t", m.Dirty) +
+		" -X tcpconnbenchmark/internal/buildinfo.release=" + m.Release)
 }
 
 func build(output string, m buildinfo.Metadata, goflags []string, targetOS, targetArch string) error {
@@ -70,7 +70,7 @@ func build(output string, m buildinfo.Metadata, goflags []string, targetOS, targ
 		// Git may be absent even when a .git directory is present.
 		args = append(args, "-buildvcs=false")
 	}
-	args = append(args, "-ldflags", linkerFlags(os.Getenv("TCPLINK_BUILD_LDFLAGS"), m), "-o", output, ".")
+	args = append(args, "-ldflags", linkerFlags(os.Getenv("TCPCONNBENCHMARK_BUILD_LDFLAGS"), m), "-o", output, ".")
 	cmd := exec.Command("go", args...)
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOFLAGS=", "GOOS="+targetOS, "GOARCH="+targetArch)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
@@ -122,7 +122,7 @@ func bundle(binary, app string, m buildinfo.Metadata) error {
 		return err
 	}
 	defer input.Close()
-	output, err := os.OpenFile(filepath.Join(macos, "TCPLink"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o755)
+	output, err := os.OpenFile(filepath.Join(macos, "tcpconnbenchmark"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o755)
 	if err != nil {
 		return err
 	}
@@ -144,7 +144,7 @@ func run() error {
 	if mode != "build" && mode != "app" && mode != "run" {
 		return errors.New("usage: buildmeta build|app|run")
 	}
-	targetOS, targetArch := os.Getenv("TCPLINK_TARGET_GOOS"), os.Getenv("TCPLINK_TARGET_GOARCH")
+	targetOS, targetArch := os.Getenv("TCPCONNBENCHMARK_TARGET_GOOS"), os.Getenv("TCPCONNBENCHMARK_TARGET_GOARCH")
 	if targetOS == "" {
 		targetOS = runtime.GOOS
 	}
@@ -158,17 +158,17 @@ func run() error {
 		return fmt.Errorf("make run 无法运行非本机目标 %s/%s（本机 %s/%s）", targetOS, targetArch, runtime.GOOS, runtime.GOARCH)
 	}
 	m := collect(".")
-	binary := os.Getenv("TCPLINK_BUILD_BINARY")
+	binary := os.Getenv("TCPCONNBENCHMARK_BUILD_BINARY")
 	if binary == "" {
-		binary = "TCPLink"
+		binary = "tcpconnbenchmark"
 	}
 	if err := build(binary, m, os.Args[2:], targetOS, targetArch); err != nil {
 		return err
 	}
 	if mode == "app" {
-		app := os.Getenv("TCPLINK_BUILD_APP")
+		app := os.Getenv("TCPCONNBENCHMARK_BUILD_APP")
 		if app == "" {
-			app = "TCPLink.app"
+			app = "tcpconnbenchmark.app"
 		}
 		return bundle(binary, app, m)
 	}

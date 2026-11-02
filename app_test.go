@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"tcplink/internal/syslimit"
-	"tcplink/internal/tester"
+	"tcpconnbenchmark/internal/syslimit"
+	"tcpconnbenchmark/internal/tester"
 )
 
 func testApp(t *testing.T) *App {

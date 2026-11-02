@@ -1,8 +1,8 @@
-# TCPLink
+# tcpconnbenchmark
 
 一个使用 Go 编写的 TCP 并发连接测试工具。图形界面使用 [MyGo Native UI](https://github.com/egoist/mygo/blob/main/docs/ui/README.md)（`github.com/egoist/mygo/ui`），由 Go 代码构建并通过 GPU 绘制，与测试引擎和日志模块编译在同一个可执行文件中。不使用 WebView、HTML、JavaScript 或 JSON IPC，也无需独立的前端工程或本地 HTTP 服务。
 
-> TCPLink 只完成 IPv4 解析和 TCP 三次握手。连接建立后不发送 HTTP 请求、不进行 TLS 握手、不传输网页数据。
+> tcpconnbenchmark 只完成 IPv4 解析和 TCP 三次握手。连接建立后不发送 HTTP 请求、不进行 TLS 握手、不传输网页数据。
 
 ## 功能
 
@@ -41,21 +41,21 @@
 
 以上系统要求参考 [MyGo 文档](https://github.com/egoist/mygo/blob/main/docs/README.md#requirements)，不代表本项目已经在每种系统和架构上实测。
 
-`make run` 构建并运行与 `make build` 相同的 `BINARY` 目标（默认 `./TCPLink`），数据保存在该可执行文件的便携目录，不会因命令退出而删除。直接 `go run .` 仍使用 Go 的临时可执行文件路径，其旁的数据不适合作为持久保存位置。
+`make run` 构建并运行与 `make build` 相同的 `BINARY` 目标（默认 `./tcpconnbenchmark`），数据保存在该可执行文件的便携目录，不会因命令退出而删除。直接 `go run .` 仍使用 Go 的临时可执行文件路径，其旁的数据不适合作为持久保存位置。
 
 ### macOS
 
 ```bash
 go mod download
-make build          # 生成 ./TCPLink
-./TCPLink           # 直接运行
+make build          # 生成 ./tcpconnbenchmark
+./tcpconnbenchmark           # 直接运行
 ```
 
 生成可双击的 `.app`：
 
 ```bash
 make app
-open TCPLink.app
+open tcpconnbenchmark.app
 ```
 
 `make app` 会尝试进行 ad-hoc 签名（`codesign --sign -`）；签名失败不会中止打包。对外分发需要你自己的开发者签名和公证。
@@ -69,7 +69,7 @@ open TCPLink.app
 ### 其他平台
 
 ```bash
-CGO_ENABLED=0 go build -trimpath -o TCPLink .
+CGO_ENABLED=0 go build -trimpath -o tcpconnbenchmark .
 ```
 
 ### 命令行模式
@@ -77,9 +77,9 @@ CGO_ENABLED=0 go build -trimpath -o TCPLink .
 图形界面之外还提供一个便于快速验证的终端模式：
 
 ```bash
-./TCPLink -cli -duration 5 -mode both -rate 10 -domains "127.0.0.1"
-./TCPLink -cli -duration 5 -mode 443 -rate 10 -domains "127.0.0.1" -save
-./TCPLink -list-interfaces
+./tcpconnbenchmark -cli -duration 5 -mode both -rate 10 -domains "127.0.0.1"
+./tcpconnbenchmark -cli -duration 5 -mode 443 -rate 10 -domains "127.0.0.1" -save
+./tcpconnbenchmark -list-interfaces
 ```
 
 示例仅连接本机的 80/443 端口；若没有相应本地服务，连接会被拒绝。第二个示例显式使用 `-save` 导出结果；默认不导出。
@@ -159,7 +159,7 @@ CSV 和摘要默认均不导出。GUI 测试结束后点击“保存结果”，
 
 **Linux 下绑定网卡提示权限不足？**
 
-较新的 Linux 内核要求 `CAP_NET_RAW` 才能使用 `SO_BINDTODEVICE`。程序会忽略权限错误并继续使用所选网卡的首个 IPv4 作为源地址；如果该网卡没有 IPv4，绑定会失败。也可以使用 `sudo setcap cap_net_raw+ep ./TCPLink` 授权。
+较新的 Linux 内核要求 `CAP_NET_RAW` 才能使用 `SO_BINDTODEVICE`。程序会忽略权限错误并继续使用所选网卡的首个 IPv4 作为源地址；如果该网卡没有 IPv4，绑定会失败。也可以使用 `sudo setcap cap_net_raw+ep ./tcpconnbenchmark` 授权。
 
 ## 开发
 
@@ -169,7 +169,7 @@ CGO_ENABLED=0 go test ./...
 CGO_ENABLED=0 go vet ./...
 ```
 
-`go run` 使用临时编译的可执行文件，其便携目录是该临时可执行文件所在目录；若要在项目目录旁使用稳定的本地数据，建议先运行 `make build`，再运行生成的 `./TCPLink`。
+`go run` 使用临时编译的可执行文件，其便携目录是该临时可执行文件所在目录；若要在项目目录旁使用稳定的本地数据，建议先运行 `make build`，再运行生成的 `./tcpconnbenchmark`。
 
 测试覆盖内置域名数量（必须为 84）、域名规范化、模式端口展开、内存日志环形缓冲，以及引擎的时长/失败停止计数、连接关闭和成功/中止日志完整性。
 

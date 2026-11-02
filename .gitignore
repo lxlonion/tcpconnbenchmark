@@ -1,4 +1,6 @@
 # build output
+/tcpconnbenchmark
+/tcpconnbenchmark.app
 /TCPLink
 /TCPLink.app
 /tcplink

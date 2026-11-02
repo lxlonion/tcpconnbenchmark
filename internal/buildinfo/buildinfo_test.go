@@ -75,8 +75,8 @@ func TestInjectedBinaryWorksAwayFromRepositoryWithoutGit(t *testing.T) {
 	}
 	for path, data := range map[string][]byte{
 		filepath.Join(pkg, "buildinfo.go"): source,
-		filepath.Join(dir, "go.mod"):       []byte("module tcplink\n\ngo 1.27.3\n"),
-		filepath.Join(dir, "main.go"):      []byte("package main\nimport (\"fmt\"; \"tcplink/internal/buildinfo\")\nfunc main(){fmt.Print(buildinfo.Label())}\n"),
+		filepath.Join(dir, "go.mod"):       []byte("module tcpconnbenchmark\n\ngo 1.27.3\n"),
+		filepath.Join(dir, "main.go"):      []byte("package main\nimport (\"fmt\"; \"tcpconnbenchmark/internal/buildinfo\")\nfunc main(){fmt.Print(buildinfo.Label())}\n"),
 	} {
 		if err := os.WriteFile(path, data, 0o644); err != nil {
 			t.Fatal(err)
@@ -87,7 +87,7 @@ func TestInjectedBinaryWorksAwayFromRepositoryWithoutGit(t *testing.T) {
 		name += ".exe"
 	}
 	binary := filepath.Join(dir, name)
-	cmd := exec.Command(goBin, "build", "-ldflags", "-X tcplink/internal/buildinfo.injected=1 -X tcplink/internal/buildinfo.branchHex=666561747572652f74657374 -X tcplink/internal/buildinfo.revision=01b0d35 -X tcplink/internal/buildinfo.dirty=true", "-o", binary, ".")
+	cmd := exec.Command(goBin, "build", "-ldflags", "-X tcpconnbenchmark/internal/buildinfo.injected=1 -X tcpconnbenchmark/internal/buildinfo.branchHex=666561747572652f74657374 -X tcpconnbenchmark/internal/buildinfo.revision=01b0d35 -X tcpconnbenchmark/internal/buildinfo.dirty=true", "-o", binary, ".")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOWORK=off", "GOPROXY=off", "CGO_ENABLED=0")
 	if out, err := cmd.CombinedOutput(); err != nil {

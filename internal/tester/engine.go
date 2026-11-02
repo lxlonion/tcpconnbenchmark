@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"tcplink/internal/syslimit"
+	"tcpconnbenchmark/internal/syslimit"
 )
 
 const (

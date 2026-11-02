@@ -1,4 +1,4 @@
-module tcplink
+module tcpconnbenchmark
 
 go 1.27.3
 

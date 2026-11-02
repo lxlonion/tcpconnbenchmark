@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 
-	"tcplink/internal/tester"
+	"tcpconnbenchmark/internal/tester"
 )
 
 const maxDomainConfigBytes = 2 << 20

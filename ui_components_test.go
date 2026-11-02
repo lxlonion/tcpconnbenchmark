@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
-	"tcplink/internal/syslimit"
-	"tcplink/internal/tester"
+	"tcpconnbenchmark/internal/syslimit"
+	"tcpconnbenchmark/internal/tester"
 )
 
 func polishView(state string) *nativeView {
@@ -92,7 +92,7 @@ func TestPolishedStateLayouts(t *testing.T) {
 					if state != "running" && tt.FramePending() {
 						t.Fatal("idle/finished must settle")
 					}
-					if dir := os.Getenv("TCPLINK_POLISH_SCREENSHOTS"); dir != "" {
+					if dir := os.Getenv("TCPCONNBENCHMARK_POLISH_SCREENSHOTS"); dir != "" {
 						if err := os.MkdirAll(dir, 0755); err != nil {
 							t.Fatal(err)
 						}

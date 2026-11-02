@@ -12,10 +12,10 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
-	"tcplink/internal/appdir"
-	"tcplink/internal/buildinfo"
-	"tcplink/internal/syslimit"
-	"tcplink/internal/tester"
+	"tcpconnbenchmark/internal/appdir"
+	"tcpconnbenchmark/internal/buildinfo"
+	"tcpconnbenchmark/internal/syslimit"
+	"tcpconnbenchmark/internal/tester"
 )
 
 const (
@@ -152,7 +152,7 @@ func (a *App) run() error {
 	view := newNativeView(a)
 	mygo.App.WhenReady(func() {
 		win := mygo.NewWindow(mygo.WindowOptions{
-			Title: "TCPLink · TCP 并发连接测试", Width: 1180, Height: 780,
+			Title: "tcpconnbenchmark · TCP 并发连接测试", Width: 1180, Height: 780,
 			MinWidth: 900, MinHeight: 650, Content: ui.View(view.view),
 		})
 		view.attach(win)

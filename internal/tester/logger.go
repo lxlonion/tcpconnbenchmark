@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"tcplink/internal/appdir"
-	"tcplink/internal/syslimit"
+	"tcpconnbenchmark/internal/appdir"
+	"tcpconnbenchmark/internal/syslimit"
 )
 
 // LogDirectory computes the portable export location without creating it.
@@ -69,7 +69,7 @@ type resultLogger struct {
 }
 
 func newResultLogger(cfg Config, domains []string, ifaceLabel string, fdInfo syslimit.Info) (*resultLogger, error) {
-	dir, err := os.MkdirTemp("", "tcplink-journal-")
+	dir, err := os.MkdirTemp("", "tcpconnbenchmark-journal-")
 	if err != nil {
 		return nil, fmt.Errorf("创建日志暂存目录失败: %w", err)
 	}
@@ -81,7 +81,7 @@ func newResultLogger(cfg Config, domains []string, ifaceLabel string, fdInfo sys
 	}
 	now := time.Now()
 	return &resultLogger{
-		sessionID: "tcp-test-" + now.Format("20060102-150405-000") + "-" + filepath.Base(dir)[len("tcplink-journal-"):],
+		sessionID: "tcp-test-" + now.Format("20060102-150405-000") + "-" + filepath.Base(dir)[len("tcpconnbenchmark-journal-"):],
 		createdAt: now, config: cfg, domains: append([]string(nil), domains...), ifaceLabel: ifaceLabel, fdInfo: fdInfo,
 		tempDir: dir, journalPath: path, file: f, queue: make(chan journalRecord, journalQueueSize), writerDone: make(chan struct{}),
 	}, nil
@@ -330,7 +330,7 @@ func (l *resultLogger) exportCSV(src io.Reader, dst io.Writer, expected uint64) 
 
 func (l *resultLogger) summary(snap Snapshot, paths ExportResult) string {
 	var b strings.Builder
-	b.WriteString("TCPLink · TCP 并发连接测试\n========================================\n")
+	b.WriteString("tcpconnbenchmark · TCP 并发连接测试\n========================================\n")
 	fmt.Fprintf(&b, "会话 ID: %s\n状态: %s\n开始时间: %s\n结束时间: %s\n", l.sessionID, snap.StopReason, l.createdAt.Format("2006-01-02 15:04:05"), snap.EndedAt)
 	fmt.Fprintf(&b, "测试模式: %s\n出口网卡: %s\n测试域名: %d 个\n发起目标: %d 个（域名 × 端口）\n测试时长: %d 秒\n", ModeLabel(l.config.Mode), l.ifaceLabel, len(l.domains), len(l.domains)*len(modePorts(l.config.Mode)), l.config.DurationSec)
 	if l.config.FailStop > 0 {

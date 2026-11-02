@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"tcplink/internal/syslimit"
-	"tcplink/internal/tester"
+	"tcpconnbenchmark/internal/syslimit"
+	"tcpconnbenchmark/internal/tester"
 )
 
 func TestDomainConfigSaveLoadAndRestore(t *testing.T) {

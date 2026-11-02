@@ -11,8 +11,8 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"tcplink/internal/syslimit"
-	"tcplink/internal/tester"
+	"tcpconnbenchmark/internal/syslimit"
+	"tcpconnbenchmark/internal/tester"
 )
 
 type viewStub struct {
@@ -70,7 +70,7 @@ func (*viewStub) Shutdown() <-chan struct{}     { ch := make(chan struct{}); clo
 func TestNativeViewLayoutAndDefaults(t *testing.T) {
 	v := newNativeView(&viewStub{})
 	tt := ui.NewTester(v.view, 1180, 780)
-	for _, label := range []string{"TCPLink", "测试模式", "出口网卡", "发起速率（次/秒）", "测试时长（秒）", "失败停止（0 不限）", "连接日志"} {
+	for _, label := range []string{"tcpconnbenchmark", "测试模式", "出口网卡", "发起速率（次/秒）", "测试时长（秒）", "失败停止（0 不限）", "连接日志"} {
 		if _, ok := tt.Find(label); !ok {
 			t.Errorf("missing %q; texts: %v", label, tt.Texts())
 		}
@@ -86,7 +86,7 @@ func TestNativeViewLayoutAndDefaults(t *testing.T) {
 }
 
 func TestNativeViewScreenshot(t *testing.T) {
-	if path := os.Getenv("TCPLINK_TEST_SCREENSHOT"); path != "" {
+	if path := os.Getenv("TCPCONNBENCHMARK_TEST_SCREENSHOT"); path != "" {
 		t.Setenv("HOME", t.TempDir())
 		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 		app := newAppInDirectory(syslimit.Raise(tester.FDSoftLimitTarget), t.TempDir())
@@ -141,8 +141,8 @@ func TestNativeViewLongPathsAccessible(t *testing.T) {
 	v.snapshot.StopReason = "手动停止"
 	v.snapshot.LogError = "示例日志错误"
 	v.message = "测试提示"
-	v.snapshot.LogPath = "/portable/TCPLink/logs/" + strings.Repeat("very-long-directory/", 8) + "result.csv"
-	v.snapshot.SummaryPath = "/portable/TCPLink/logs/" + strings.Repeat("very-long-directory/", 8) + "result.summary.txt"
+	v.snapshot.LogPath = "/portable/tcpconnbenchmark/logs/" + strings.Repeat("very-long-directory/", 8) + "result.csv"
+	v.snapshot.SummaryPath = "/portable/tcpconnbenchmark/logs/" + strings.Repeat("very-long-directory/", 8) + "result.summary.txt"
 	csvPath, summaryPath := v.snapshot.LogPath, v.snapshot.SummaryPath
 	tt := ui.NewTester(v.view, 900, 650)
 	if _, ok := tt.Find("CSV 日志路径"); ok {

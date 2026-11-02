@@ -9,7 +9,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
-	"tcplink/internal/tester"
+	"tcpconnbenchmark/internal/tester"
 )
 
 type nativeView struct {
@@ -388,7 +388,7 @@ func (v *nativeView) view(c *ui.Context) {
 func (v *nativeView) header(c *ui.Context) {
 	ui.Row(c).Height(42).Gap(12).Children(func() {
 		ui.Column(c).Grow(1).Gap(2).Children(func() {
-			ui.Text(c, "TCPLink").FontSize(22).Bold()
+			ui.Text(c, "tcpconnbenchmark").FontSize(22).Bold()
 			ui.Text(c, "TCP 并发连接测试 · 仅握手，不发送 HTTP / TLS 数据").FontSize(11).TextColor(c.Theme().TextMuted).SingleLine()
 		})
 		v.lifecyclePill(c)

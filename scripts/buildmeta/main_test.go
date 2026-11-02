@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"tcplink/internal/buildinfo"
+	"tcpconnbenchmark/internal/buildinfo"
 )
 
 func TestCollectTemporaryRepository(t *testing.T) {
@@ -81,8 +81,13 @@ func TestPlistAndSafeBranchFlags(t *testing.T) {
 		t.Fatalf("development plist: %s (%v)", data, err)
 	}
 	flags := linkerFlags("-s -w", dev)
-	if strings.Contains(flags, dev.Branch) || !strings.Contains(flags, "branchHex=666561747572652f612662") || !strings.HasPrefix(flags, "-s -w ") {
+	if strings.Contains(flags, dev.Branch) || !strings.Contains(flags, "tcpconnbenchmark/internal/buildinfo.branchHex=666561747572652f612662") || !strings.HasPrefix(flags, "-s -w ") {
 		t.Fatalf("unsafe linker flags: %q", flags)
+	}
+	for _, want := range []string{"<string>tcpconnbenchmark</string>", "<string>app.tcpconnbenchmark.desktop</string>", "<key>tcpconnbenchmarkBuildLabel</key>"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("development plist missing %q", want)
+		}
 	}
 	data, err = plist(template, buildinfo.Metadata{Revision: "0123456", Release: "v1.2.3+build.1"})
 	if err != nil || !strings.Contains(string(data), "<key>CFBundleShortVersionString</key>\n\t<string>1.2.3</string>") || !strings.Contains(string(data), "v1.2.3+build.1") {
@@ -101,7 +106,7 @@ func makeFixture(t *testing.T) string {
 		t.Skip("go not available")
 	}
 	dir := t.TempDir()
-	for _, path := range []string{"scripts/buildmeta", "internal/buildinfo", "portable"} {
+	for _, path := range []string{"scripts/buildmeta", "internal/buildinfo", "portable", "packaging"} {
 		if err := os.MkdirAll(filepath.Join(dir, path), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -110,6 +115,7 @@ func makeFixture(t *testing.T) string {
 		"../../Makefile":                        "Makefile",
 		"main.go":                               "scripts/buildmeta/main.go",
 		"../../internal/buildinfo/buildinfo.go": "internal/buildinfo/buildinfo.go",
+		"../../packaging/Info.plist":            "packaging/Info.plist",
 	} {
 		data, err := os.ReadFile(src)
 		if err != nil {
@@ -128,7 +134,7 @@ func main() {
   if err := os.WriteFile(filepath.Join(dir, "logs", "marker"), []byte("saved"), 0644); err != nil { panic(err) }
   if err := os.WriteFile(filepath.Join(dir, "domains.json"), []byte("saved"), 0644); err != nil { panic(err) }
 }`
-	for name, data := range map[string]string{"go.mod": "module tcplink\n\ngo 1.27.3\n", "main.go": app} {
+	for name, data := range map[string]string{"go.mod": "module tcpconnbenchmark\n\ngo 1.27.3\n", "main.go": app} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -141,6 +147,29 @@ func runMake(dir, targetOS, targetArch string, args ...string) ([]byte, error) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOPROXY=off", "GOWORK=off", "GOOS="+targetOS, "GOARCH="+targetArch, "GOFLAGS=")
 	return cmd.CombinedOutput()
+}
+
+func TestMakeDefaultArtifacts(t *testing.T) {
+	dir := makeFixture(t)
+	out, err := runMake(dir, runtime.GOOS, runtime.GOARCH, "build")
+	if err != nil {
+		t.Fatalf("make build: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "tcpconnbenchmark")); err != nil {
+		t.Fatalf("default binary: %v", err)
+	}
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	out, err = runMake(dir, runtime.GOOS, runtime.GOARCH, "app")
+	if err != nil {
+		t.Fatalf("make app: %v\n%s", err, out)
+	}
+	for _, path := range []string{"tcpconnbenchmark.app/Contents/Info.plist", "tcpconnbenchmark.app/Contents/MacOS/tcpconnbenchmark"} {
+		if _, err := os.Stat(filepath.Join(dir, path)); err != nil {
+			t.Errorf("default app artifact %s: %v", path, err)
+		}
+	}
 }
 
 func TestMakeRunKeepsPortableData(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
-	"tcplink/internal/tester"
+	"tcpconnbenchmark/internal/tester"
 )
 
 type lifecycleStyle struct {
