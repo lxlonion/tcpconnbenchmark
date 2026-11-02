@@ -12,8 +12,6 @@ import (
 	"tcplink/internal/tester"
 )
 
-const logViewLimit = 600
-
 type nativeView struct {
 	controller          guiController
 	window              *mygo.Window
@@ -46,13 +44,24 @@ type nativeView struct {
 	sampleSession                            string
 	interfacesPending                        <-chan result[[]tester.InterfaceInfo]
 	openPending                              <-chan result[struct{}]
+	saveDomainsPending                       <-chan result[[]string]
+	saveDomainsRequested                     []string
+	saveDomainsIgnored                       int
+	exportPending                            <-chan result[tester.ExportResult]
+	exportGeneration                         uint64
+	exportSession                            string
+	exported                                 tester.ExportResult
 }
 
 func newNativeView(controller guiController) *nativeView {
 	b := controller.Bootstrap()
-	return &nativeView{controller: controller, boot: b, domains: append([]string(nil), b.Domains...),
+	v := &nativeView{controller: controller, boot: b, domains: append([]string(nil), b.Domains...),
 		interfaces: b.Interfaces, rate: strconv.Itoa(b.DefaultRatePerSec), duration: strconv.Itoa(b.DefaultDurationSec),
 		failStop: strconv.Itoa(b.DefaultFailStop), follow: true}
+	if b.ConfigError != "" {
+		v.message = "域名配置读取失败：" + b.ConfigError
+	}
+	return v
 }
 
 func (v *nativeView) attach(win *mygo.Window) { v.window = win }
@@ -86,7 +95,7 @@ func parseInteger(s string, min, max int) (int, bool) {
 }
 
 func (v *nativeView) locked() bool {
-	return v.closing || v.startPending != nil || v.stopPending != nil || v.interfacesPending != nil || (v.session != "" && !v.snapshot.Finished)
+	return v.closing || v.startPending != nil || v.stopPending != nil || v.interfacesPending != nil || v.saveDomainsPending != nil || v.exportPending != nil || (v.session != "" && !v.snapshot.Finished)
 }
 
 func (v *nativeView) start() {
@@ -129,7 +138,7 @@ func (v *nativeView) clearLogs() {
 	v.logEpoch++
 	v.entries = nil
 	v.since = tail
-	v.message = "已清空视图，日志文件不受影响"
+	v.message = "已清空视图，完整结果未受影响"
 	if v.session != "" {
 		v.drained = false
 		v.nextSampleAt = time.Time{}
@@ -149,6 +158,12 @@ func (v *nativeView) acceptSample(r result[sampleData]) {
 		return
 	}
 	v.snapshot = d.State
+	if v.exported.LogPath != "" {
+		v.snapshot.LogPath = v.exported.LogPath
+	}
+	if v.exported.SummaryPath != "" {
+		v.snapshot.SummaryPath = v.exported.SummaryPath
+	}
 	if d.NextSeq > v.since {
 		v.since = d.NextSeq
 	}
@@ -156,15 +171,15 @@ func (v *nativeView) acceptSample(r result[sampleData]) {
 		for _, entry := range d.Logs {
 			v.entries = append(v.entries, entry)
 		}
-		if len(v.entries) > logViewLimit {
-			v.entries = append([]tester.LogEntry(nil), v.entries[len(v.entries)-logViewLimit:]...)
+		if len(v.entries) > liveLogCapacity {
+			v.entries = append([]tester.LogEntry(nil), v.entries[len(v.entries)-liveLogCapacity:]...)
 		}
 		if v.follow {
 			v.scrollRequested = true
 		}
 	}
 	if d.Dropped {
-		v.message = "部分实时记录已被覆盖；请查看日志文件"
+		v.message = "部分实时记录已被覆盖；测试完成后可保存完整结果"
 	}
 	v.drained = d.State.Finished && len(d.Logs) == 0
 }
@@ -182,6 +197,7 @@ func (v *nativeView) poll(now time.Time) {
 				v.logEpoch++
 				v.session = r.Value.SessionID
 				v.snapshot = r.Value
+				v.exported = tester.ExportResult{}
 				v.entries = nil
 				v.since = 0
 				v.drained = false
@@ -247,6 +263,38 @@ func (v *nativeView) poll(now time.Time) {
 		default:
 		}
 	}
+	if v.saveDomainsPending != nil {
+		select {
+		case r := <-v.saveDomainsPending:
+			v.saveDomainsPending = nil
+			if !v.closing {
+				if r.Err != nil {
+					v.message = "保存域名失败：" + r.Err.Error()
+				} else {
+					v.domains = append([]string(nil), r.Value...)
+					v.editing = false
+					v.message = fmt.Sprintf("已保存并应用 %d 个域名，忽略 %d 个无效项", len(v.domains), v.saveDomainsIgnored)
+				}
+			}
+		default:
+		}
+	}
+	if v.exportPending != nil {
+		select {
+		case r := <-v.exportPending:
+			v.exportPending = nil
+			if !v.closing && v.exportGeneration == v.generation && v.exportSession == v.session {
+				if r.Err != nil {
+					v.message = "保存结果失败：" + r.Err.Error()
+				} else {
+					v.exported = r.Value
+					v.snapshot.LogPath, v.snapshot.SummaryPath = r.Value.LogPath, r.Value.SummaryPath
+					v.message = "结果已保存"
+				}
+			}
+		default:
+		}
+	}
 	if !v.closing && v.session != "" && !v.drained && v.samplePending == nil && !now.Before(v.nextSampleAt) {
 		v.sampleGeneration, v.sampleEpoch, v.sampleSession = v.generation, v.logEpoch, v.session
 		v.samplePending = v.controller.Sample(v.session, v.since)
@@ -255,7 +303,7 @@ func (v *nativeView) poll(now time.Time) {
 }
 
 func (v *nativeView) needsWake() bool {
-	return !v.closing && (v.startPending != nil || v.stopPending != nil || v.samplePending != nil || v.interfacesPending != nil || v.openPending != nil || (v.session != "" && !v.drained))
+	return !v.closing && (v.startPending != nil || v.stopPending != nil || v.samplePending != nil || v.interfacesPending != nil || v.openPending != nil || v.saveDomainsPending != nil || v.exportPending != nil || (v.session != "" && !v.drained))
 }
 
 func (v *nativeView) shownEntries() []tester.LogEntry {
@@ -276,7 +324,7 @@ func (v *nativeView) editDomains() {
 	}
 }
 func (v *nativeView) applyDomains() {
-	if v.closing {
+	if v.closing || v.saveDomainsPending != nil {
 		return
 	}
 	valid, invalid := tester.NormalizeDomains([]string{v.draft})
@@ -284,9 +332,19 @@ func (v *nativeView) applyDomains() {
 		v.message = "有效域名须为 1–5000 个"
 		return
 	}
-	v.domains = valid
-	v.editing = false
-	v.message = fmt.Sprintf("已应用 %d 个域名，忽略 %d 个无效项", len(valid), len(invalid))
+	v.saveDomainsIgnored = len(invalid)
+	v.saveDomainsRequested = append([]string(nil), valid...)
+	v.saveDomainsPending = v.controller.SaveDomains(append([]string(nil), v.saveDomainsRequested...))
+	v.message = "正在保存域名…"
+}
+
+func (v *nativeView) exportResults() {
+	if v.locked() || v.editing || v.session == "" || !v.snapshot.Finished {
+		return
+	}
+	v.exportGeneration, v.exportSession = v.generation, v.session
+	v.exportPending = v.controller.Export(v.session)
+	v.message = "正在保存结果…"
 }
 
 func (v *nativeView) view(c *ui.Context) {
@@ -338,7 +396,6 @@ func (v *nativeView) header(c *ui.Context) {
 	ui.Row(c).Gap(12).Children(func() {
 		ui.Text(c, "TCPLink").FontSize(22).Bold()
 		ui.Text(c, "TCP 并发连接测试 · 仅握手，不发送 HTTP / TLS 数据").Grow(1).SingleLine()
-		ui.Text(c, fmt.Sprintf("单连接最多保持 %d 秒", v.boot.MaxHoldSec)).SingleLine()
 		ui.Text(c, status).Bold()
 	})
 }
@@ -407,24 +464,30 @@ func (v *nativeView) numberField(c *ui.Context, label, key string, value *string
 
 func (v *nativeView) domainEditor(c *ui.Context) {
 	valid, invalid := tester.NormalizeDomains([]string{v.draft})
+	locked := v.closing || v.saveDomainsPending != nil
 	ui.Text(c, "测试域名：每行一个，也可粘贴网址；空行和 # 注释会被忽略").Bold()
+	ui.Text(c, "配置文件："+v.boot.ConfigPath).SingleLine()
 	ui.Text(c, fmt.Sprintf("有效 %d 个 · 无效 %d 个（最多 5000 个）", len(valid), len(invalid)))
 	if len(invalid) > 0 {
 		ui.Text(c, "无效："+strings.Join(invalid[:min(3, len(invalid))], "、")).SingleLine()
 	}
-	ui.TextArea(c.Key("domain-draft"), &v.draft).Label("域名草稿").Disabled(v.closing).Grow(1)
+	ui.TextArea(c.Key("domain-draft"), &v.draft).Label("域名草稿").Disabled(locked).Grow(1)
 	ui.Row(c).Gap(8).Children(func() {
-		if ui.Button(c.Key("domain-reset"), "恢复内置").Disabled(v.closing).Clicked() {
-			v.draft = strings.Join(v.boot.Domains, "\n")
+		if ui.Button(c.Key("domain-reset"), "恢复内置").Disabled(locked).Clicked() {
+			v.draft = strings.Join(v.boot.BuiltinDomains, "\n")
 		}
-		if ui.Button(c.Key("domain-clear"), "清空草稿").Disabled(v.closing).Clicked() {
+		if ui.Button(c.Key("domain-clear"), "清空草稿").Disabled(locked).Clicked() {
 			v.draft = ""
 		}
 		ui.Spacer(c)
-		if ui.Button(c.Key("domain-cancel"), "取消").Disabled(v.closing).Clicked() {
+		if ui.Button(c.Key("domain-cancel"), "取消").Disabled(locked).Clicked() {
 			v.editing = false
 		}
-		if ui.PrimaryButton(c.Key("domain-apply"), "应用域名").Disabled(v.closing || len(valid) == 0 || len(valid) > 5000).Clicked() {
+		label := "保存并应用"
+		if v.saveDomainsPending != nil {
+			label = "正在保存…"
+		}
+		if ui.PrimaryButton(c.Key("domain-apply"), label).Disabled(locked || len(valid) == 0 || len(valid) > 5000).Clicked() {
 			v.applyDomains()
 		}
 	})
@@ -447,10 +510,13 @@ func (v *nativeView) stats(c *ui.Context) {
 	if s.Success+s.Failed > 0 {
 		rate = fmt.Sprintf("%.1f%%", s.SuccessRate)
 	}
-	ui.Row(c).Gap(12).Children(func() {
-		ui.Text(c, fmt.Sprintf("尝试 %d    成功 %d    失败 %d    中止 %d    成功率 %s", s.Attempts, s.Success, s.Failed, s.Aborted, rate)).SingleLine()
+	ui.Row(c).Height(42).Padding(8, 12).Radius(8).Background(c.Theme().Surface).Children(func() {
+		text := fmt.Sprintf("尝试 %d    成功 %d    失败 %d    中止 %d    成功率 %s", s.Attempts, s.Success, s.Failed, s.Aborted, rate)
+		if v.startPending != nil || (v.session != "" && !s.Finished) {
+			text = fmt.Sprintf("进行中 %d    拨号中 %d    已关闭 %d    峰值 %d    平均 %.1f 次/秒", s.Active, s.Dialing, s.Closed, s.Max, s.AvgRate)
+		}
+		ui.Text(c, text).FontSize(16).Bold().TextColor(c.Theme().Accent).SingleLine()
 	})
-	ui.Text(c, fmt.Sprintf("进行中 %d    拨号中 %d    已关闭 %d    峰值 %d    平均 %.1f 次/秒", s.Active, s.Dialing, s.Closed, s.Max, s.AvgRate)).SingleLine()
 	progress := 0.0
 	if s.DurationSec > 0 {
 		progress = min(1, max(0, s.ElapsedSec/float64(s.DurationSec)))
@@ -513,11 +579,27 @@ func (v *nativeView) footer(c *ui.Context) {
 	if v.message != "" {
 		ui.Text(c, v.message).SingleLine()
 	}
+	if v.session != "" && v.snapshot.Finished && (v.snapshot.LogPath == "" || v.snapshot.SummaryPath == "") {
+		ui.Text(c, "结果尚未保存，开始新测试或关闭后丢失").TextColor(c.Theme().Accent).SingleLine()
+	}
 	ui.Row(c).Gap(8).Children(func() {
-		ui.Text(c, "目录："+v.boot.LogDir).Grow(1).SingleLine()
+		ui.Text(c, "日志目录："+v.boot.LogDir).Grow(1).SingleLine()
 		if ui.Button(c.Key("open-logs"), "打开目录").Disabled(v.closing || v.openPending != nil).Clicked() {
 			v.openPending = v.controller.OpenLogs()
 		}
+		label := "保存结果"
+		if v.exportPending != nil {
+			label = "保存中…"
+		}
+		if ui.Button(c.Key("export-results"), label).Disabled(v.locked() || v.editing || v.session == "" || !v.snapshot.Finished).Clicked() {
+			v.exportResults()
+		}
+	})
+	ui.Row(c).Gap(8).Children(func() {
+		ui.Text(c, "应用目录：")
+		ui.TextInput(c.Key("app-dir"), &v.boot.AppDir).Label("应用目录").ReadOnly(true).Grow(1)
+		ui.Text(c, "域名配置：")
+		ui.TextInput(c.Key("config-path"), &v.boot.ConfigPath).Label("域名配置路径").ReadOnly(true).Grow(1)
 	})
 	ui.Row(c).Gap(8).Children(func() {
 		ui.Text(c, "CSV：").Width(55)

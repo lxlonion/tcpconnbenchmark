@@ -20,15 +20,15 @@ type viewStub struct {
 	samples          []chan result[sampleData]
 	tail             uint64
 	requests         []startRequest
-	holdSec          int
 	minRate, maxRate int
+	save             chan result[[]string]
+	savedDomains     [][]string
+	exports          []chan result[tester.ExportResult]
+	exportSessions   []string
+	configError      string
 }
 
 func (s *viewStub) Bootstrap() bootstrapData {
-	hold := s.holdSec
-	if hold == 0 {
-		hold = 60
-	}
 	minRate, maxRate := s.minRate, s.maxRate
 	if minRate == 0 {
 		minRate = tester.MinRatePerSec
@@ -36,7 +36,7 @@ func (s *viewStub) Bootstrap() bootstrapData {
 	if maxRate == 0 {
 		maxRate = tester.MaxRatePerSec
 	}
-	return bootstrapData{Domains: []string{"example.com", "example.org"}, DefaultRatePerSec: 125, DefaultDurationSec: 60, DefaultFailStop: 50, MinRatePerSec: minRate, MaxRatePerSec: maxRate, MaxHoldSec: hold, Version: "test"}
+	return bootstrapData{Domains: []string{"example.com", "example.org"}, BuiltinDomains: []string{"builtin.example"}, AppDir: "/portable", LogDir: "/portable/logs", ConfigPath: "/portable/domains.json", ConfigError: s.configError, DefaultRatePerSec: 125, DefaultDurationSec: 360, DefaultFailStop: 50, MinRatePerSec: minRate, MaxRatePerSec: maxRate, Version: "test"}
 }
 func (s *viewStub) Start(r startRequest) <-chan result[tester.Snapshot] {
 	s.requests = append(s.requests, r)
@@ -53,8 +53,19 @@ func (*viewStub) Interfaces() <-chan result[[]tester.InterfaceInfo] {
 	return reply([]tester.InterfaceInfo(nil), nil)
 }
 func (*viewStub) OpenLogs() <-chan result[struct{}] { return reply(struct{}{}, nil) }
-func (s *viewStub) Tail(string) (uint64, error)     { return s.tail, nil }
-func (*viewStub) Shutdown() <-chan struct{}         { ch := make(chan struct{}); close(ch); return ch }
+func (s *viewStub) SaveDomains(domains []string) <-chan result[[]string] {
+	s.savedDomains = append(s.savedDomains, append([]string(nil), domains...))
+	s.save = make(chan result[[]string], 1)
+	return s.save
+}
+func (s *viewStub) Export(session string) <-chan result[tester.ExportResult] {
+	s.exportSessions = append(s.exportSessions, session)
+	ch := make(chan result[tester.ExportResult], 1)
+	s.exports = append(s.exports, ch)
+	return ch
+}
+func (s *viewStub) Tail(string) (uint64, error) { return s.tail, nil }
+func (*viewStub) Shutdown() <-chan struct{}     { ch := make(chan struct{}); close(ch); return ch }
 
 func TestNativeViewLayoutAndDefaults(t *testing.T) {
 	v := newNativeView(&viewStub{})
@@ -64,34 +75,25 @@ func TestNativeViewLayoutAndDefaults(t *testing.T) {
 			t.Errorf("missing %q; texts: %v", label, tt.Texts())
 		}
 	}
-	if v.rate != "125" || v.duration != "60" || v.failStop != "50" || v.mode != 0 || !v.follow {
+	if v.rate != "125" || v.duration != "360" || v.failStop != "50" || v.mode != 0 || !v.follow {
 		t.Fatalf("wrong defaults: %#v", v)
 	}
-	if !tt.HasText("已运行 0 秒 · 剩余 60 秒") || !tt.HasText("失败 0 / 50") {
+	if !tt.HasText("已运行 0 秒 · 剩余 360 秒") || !tt.HasText("失败 0 / 50") {
 		t.Fatalf("incorrect default progress: %v", tt.Texts())
 	}
 	tt.SetSize(900, 650)
 	tt.SetDark(true)
 }
 
-func TestNativeViewHoldLimitFromBootstrap(t *testing.T) {
-	v := newNativeView(&viewStub{holdSec: 37})
-	tt := ui.NewTester(v.view, 900, 650)
-	r, ok := tt.Find("单连接最多保持 37 秒")
-	if !ok || r.X < 0 || r.Y < 0 || r.W <= 0 || r.H <= 0 || r.X+r.W > 900 || r.Y+r.H > 650 {
-		t.Fatalf("hold limit missing or outside window: %+v found=%v", r, ok)
-	}
-}
-
 func TestNativeViewScreenshot(t *testing.T) {
 	if path := os.Getenv("TCPLINK_TEST_SCREENSHOT"); path != "" {
 		t.Setenv("HOME", t.TempDir())
 		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-		app := newApp(syslimit.Raise(tester.FDSoftLimitTarget))
+		app := newAppInDirectory(syslimit.Raise(tester.FDSoftLimitTarget), t.TempDir())
 		v := newNativeView(app)
 		tt := ui.NewTester(v.view, 900, 650)
 		tt.SetDark(true)
-		if len(v.domains) != 84 || !tt.HasText("已运行 0 秒 · 剩余 60 秒") || !tt.HasText("失败 0 / 50") {
+		if len(v.domains) != 84 || !tt.HasText("已运行 0 秒 · 剩余 360 秒") || !tt.HasText("失败 0 / 50") {
 			t.Fatalf("incorrect bootstrap defaults: %v", tt.Texts())
 		}
 		f, err := os.Create(path)
@@ -139,8 +141,8 @@ func TestNativeViewLongPathsAccessible(t *testing.T) {
 	v.snapshot.StopReason = "手动停止"
 	v.snapshot.LogError = "示例日志错误"
 	v.message = "测试提示"
-	v.snapshot.LogPath = "/Users/example/Library/Application Support/TCPLink/logs/" + strings.Repeat("very-long-directory/", 8) + "result.csv"
-	v.snapshot.SummaryPath = "/Users/example/Library/Application Support/TCPLink/logs/" + strings.Repeat("very-long-directory/", 8) + "result.summary.txt"
+	v.snapshot.LogPath = "/portable/TCPLink/logs/" + strings.Repeat("very-long-directory/", 8) + "result.csv"
+	v.snapshot.SummaryPath = "/portable/TCPLink/logs/" + strings.Repeat("very-long-directory/", 8) + "result.summary.txt"
 	csvPath, summaryPath := v.snapshot.LogPath, v.snapshot.SummaryPath
 	tt := ui.NewTester(v.view, 900, 650)
 	for _, item := range []struct{ label, want string }{{"CSV 日志路径", v.snapshot.LogPath}, {"摘要文件路径", v.snapshot.SummaryPath}} {
@@ -234,7 +236,7 @@ func TestNativeViewDomainDraft(t *testing.T) {
 	if err := tt.Click("恢复内置"); err != nil {
 		t.Fatal(err)
 	}
-	if v.draft != "example.com\nexample.org" {
+	if v.draft != "builtin.example" {
 		t.Fatalf("reset: %q", v.draft)
 	}
 	if err := tt.Click("清空草稿"); err != nil {
@@ -252,6 +254,12 @@ func TestNativeViewDomainDraft(t *testing.T) {
 	v.editDomains()
 	v.draft = "https://example.net/path\ninvalid_thing"
 	v.applyDomains()
+	if len(v.domains) != 2 || !v.editing {
+		t.Fatal("domain save changed state before success")
+	}
+	s := v.controller.(*viewStub)
+	s.save <- result[[]string]{Value: []string{"example.net"}}
+	v.poll(time.Unix(100, 0))
 	if len(v.domains) != 1 || v.domains[0] != "example.net" || v.editing {
 		t.Fatalf("apply: %#v", v.domains)
 	}
@@ -278,13 +286,182 @@ func TestNativeViewDomainEditorDisabledWhenClosing(t *testing.T) {
 	v.closing = true
 	tt.Frame()
 	tt.Type("unwanted")
-	for _, label := range []string{"恢复内置", "清空草稿", "应用域名"} {
+	for _, label := range []string{"恢复内置", "清空草稿", "保存并应用"} {
 		_ = tt.Click(label)
 	}
 	v.applyDomains()
 	if v.draft != "edited.example" || !v.editing || len(v.domains) != 2 || v.domains[0] != "example.com" {
 		t.Fatalf("closing editor was modified: draft=%q domains=%v", v.draft, v.domains)
 	}
+}
+
+func TestNativeViewDomainSaveFailureAndRetry(t *testing.T) {
+	s := &viewStub{configError: "配置损坏"}
+	v := newNativeView(s)
+	if !strings.Contains(v.message, "配置损坏") {
+		t.Fatal("configuration error not shown")
+	}
+	v.editDomains()
+	v.draft = "https://example.net/path\ninvalid_thing"
+	tt := ui.NewTester(v.view, 900, 650)
+	if err := tt.Click("域名草稿"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("保存并应用"); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.savedDomains) != 1 || len(s.savedDomains[0]) != 1 || s.savedDomains[0][0] != "example.net" {
+		t.Fatalf("bad save request: %v", s.savedDomains)
+	}
+	if !v.editing || v.domains[0] != "example.com" {
+		t.Fatal("applied before persistence")
+	}
+	for _, label := range []string{"恢复内置", "清空草稿", "取消", "正在保存…"} {
+		_ = tt.Click(label)
+	}
+	_ = tt.Click("域名草稿")
+	tt.Type("should-not-edit")
+	if v.draft != "https://example.net/path\ninvalid_thing" || !v.editing || len(s.savedDomains) != 1 {
+		t.Fatal("pending save did not lock editor")
+	}
+	s.save <- result[[]string]{Err: errors.New("磁盘不可写")}
+	tt.Advance(200 * time.Millisecond)
+	if !v.editing || v.domains[0] != "example.com" || !strings.Contains(v.message, "磁盘不可写") {
+		t.Fatal("failed save did not retain draft and old domains")
+	}
+	if err := tt.Click("保存并应用"); err != nil {
+		t.Fatal(err)
+	}
+	s.save <- result[[]string]{Value: []string{"example.net"}}
+	tt.Advance(200 * time.Millisecond)
+	if v.editing || len(v.domains) != 1 || v.domains[0] != "example.net" || !strings.Contains(v.message, "忽略 1") {
+		t.Fatalf("save did not apply: %v %q", v.domains, v.message)
+	}
+}
+
+func TestNativeViewManualExportAndStaleSample(t *testing.T) {
+	s := &viewStub{}
+	v := newNativeView(s)
+	tt := ui.NewTester(v.view, 900, 650)
+	_ = tt.Click("保存结果")
+	if len(s.exports) != 0 {
+		t.Fatal("idle exported")
+	}
+	v.session = "s"
+	v.generation = 1
+	v.snapshot = tester.Snapshot{SessionID: "s", HasEngine: true, Running: true}
+	tt.Frame()
+	_ = tt.Click("保存结果")
+	if len(s.exports) != 0 {
+		t.Fatal("running exported")
+	}
+	v.snapshot.Finished = true
+	v.snapshot.Running = false
+	tt.Frame()
+	if !tt.HasText("结果尚未保存，开始新测试或关闭后丢失") {
+		t.Fatal("missing unsaved warning")
+	}
+	if err := tt.Click("保存结果"); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.exports) != 1 || s.exportSessions[0] != "s" || !v.locked() || !tt.HasText("保存中…") {
+		t.Fatal("export not pending or form not locked")
+	}
+	_ = tt.Click("开始测试")
+	if len(s.requests) != 0 {
+		t.Fatal("started while export pending")
+	}
+	s.exports[0] <- result[tester.ExportResult]{Err: errors.New("磁盘错误")}
+	tt.Advance(200 * time.Millisecond)
+	if !strings.Contains(v.message, "磁盘错误") || v.snapshot.LogPath != "" {
+		t.Fatal("failed export not retryable")
+	}
+	if err := tt.Click("保存结果"); err != nil {
+		t.Fatal(err)
+	}
+	s.exports[1] <- result[tester.ExportResult]{Value: tester.ExportResult{LogPath: "/portable/logs/a.csv", SummaryPath: "/portable/logs/a.summary.txt"}}
+	tt.Advance(200 * time.Millisecond)
+	if v.snapshot.LogPath != "/portable/logs/a.csv" || v.snapshot.SummaryPath == "" {
+		t.Fatal("export paths not applied")
+	}
+	if len(s.samples) == 0 {
+		t.Fatal("expected in-flight sample")
+	}
+	s.samples[0] <- result[sampleData]{Value: sampleData{State: tester.Snapshot{SessionID: "s", HasEngine: true, Finished: true}}}
+	tt.Advance(200 * time.Millisecond)
+	if v.snapshot.LogPath != "/portable/logs/a.csv" || v.snapshot.SummaryPath == "" {
+		t.Fatal("stale sample erased export paths")
+	}
+	if tt.HasText("结果尚未保存，开始新测试或关闭后丢失") {
+		t.Fatal("saved result still marked unsaved")
+	}
+	if err := tt.Click("开始测试"); err != nil {
+		t.Fatal(err)
+	}
+	s.start <- result[tester.Snapshot]{Value: tester.Snapshot{SessionID: "next", HasEngine: true, Running: true}}
+	tt.Advance(200 * time.Millisecond)
+	if v.session != "next" || v.snapshot.LogPath != "" || v.exported.LogPath != "" || len(s.exports) != 2 {
+		t.Fatal("new session kept old paths or exported automatically")
+	}
+}
+
+func TestNativeViewStaleExportIsIgnored(t *testing.T) {
+	s := &viewStub{}
+	v := newNativeView(s)
+	v.session, v.generation = "old", 1
+	v.snapshot = tester.Snapshot{SessionID: "old", Finished: true}
+	v.drained = true
+	v.exportResults()
+	v.session, v.generation = "new", 2
+	v.snapshot = tester.Snapshot{SessionID: "new", Finished: true}
+	s.exports[0] <- result[tester.ExportResult]{Value: tester.ExportResult{LogPath: "/old.csv", SummaryPath: "/old.txt"}}
+	v.poll(time.Unix(100, 0))
+	if v.snapshot.LogPath != "" || v.snapshot.SummaryPath != "" || v.exported.LogPath != "" {
+		t.Fatal("stale export contaminated new session")
+	}
+}
+
+func TestNativeViewStatsExclusiveAndLayout(t *testing.T) {
+	s := &viewStub{}
+	v := newNativeView(s)
+	tt := ui.NewTester(v.view, 900, 650)
+	width, height := float32(900), float32(650)
+	finished := "尝试 0    成功 0    失败 0    中止 0    成功率 —"
+	running := "进行中 0    拨号中 0    已关闭 0    峰值 0    平均 0.0 次/秒"
+	check := func(want, absent string) ui.Rect {
+		t.Helper()
+		r, ok := tt.Find(want)
+		if !ok || tt.HasText(absent) || r.X < 0 || r.Y < 0 || r.X+r.W > width || r.Y+r.H > height {
+			t.Fatalf("stats missing, overlapping or out of bounds: %+v %v texts=%v", r, ok, tt.Texts())
+		}
+		return r
+	}
+	idle := check(finished, running)
+	v.start()
+	tt.Frame()
+	starting := check(running, finished)
+	v.startPending = nil
+	v.session = "s"
+	v.snapshot = tester.Snapshot{SessionID: "s", HasEngine: true, Running: true}
+	tt.Frame()
+	active := check(running, finished)
+	v.snapshot.Stopping = true
+	tt.Frame()
+	check(running, finished)
+	v.snapshot.Finished = true
+	v.drained = true
+	tt.Frame()
+	end := check(finished, running)
+	if idle.Y != starting.Y || idle.Y != active.Y || idle.Y != end.Y {
+		t.Fatalf("stats shifted: %v %v %v %v", idle, starting, active, end)
+	}
+	tt.SetDark(true)
+	check(finished, running)
+	tt.SetSize(1180, 780)
+	width, height = 1180, 780
+	check(finished, running)
+	tt.SetDark(false)
+	check(finished, running)
 }
 
 func TestNativeViewFiltersAndCap(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"tcplink/internal/appdir"
 	"tcplink/internal/syslimit"
 	"tcplink/internal/tester"
 )
@@ -18,11 +19,12 @@ func main() {
 
 	cliMode := flag.Bool("cli", false, "不启动图形界面，直接在终端运行测试")
 	modeFlag := flag.String("mode", "both", "测试模式: 80, 443, both")
-	duration := flag.Int("duration", 10, "测试时长（秒）")
+	duration := flag.Int("duration", tester.DefaultDurationSec, "测试时长（秒）")
 	failStop := flag.Int("fail-stop", 50, "累计失败多少次后停止，0 表示不限制")
 	rate := flag.Int("rate", tester.DefaultRatePerSec, "每秒发起连接次数")
 	iface := flag.String("iface", "", "出口网卡名称，例如 en0；留空使用系统默认路由")
-	domainsFlag := flag.String("domains", "", "测试域名，逗号或换行分隔；留空使用内置 84 个域名")
+	domainsFlag := flag.String("domains", "", "测试域名，逗号或换行分隔；未指定时读取应用目录配置")
+	save := flag.Bool("save", false, "测试结束后导出 CSV 和摘要到应用目录的 logs")
 	listInterfaces := flag.Bool("list-interfaces", false, "列出可用网卡后退出")
 	flag.Parse()
 
@@ -43,18 +45,35 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
 		}
-		domains := tester.BuiltinDomains
-		if strings.TrimSpace(*domainsFlag) != "" {
+		domains := append([]string(nil), tester.BuiltinDomains...)
+		domainsSpecified := false
+		flag.Visit(func(f *flag.Flag) {
+			if f.Name == "domains" {
+				domainsSpecified = true
+			}
+		})
+		if domainsSpecified {
 			domains = []string{*domainsFlag}
+		} else if dir, err := appdir.Directory(); err != nil {
+			fmt.Fprintf(os.Stderr, "读取域名配置失败，使用内置域名: %v\n", err)
+		} else {
+			var err error
+			domains, err = loadDomainConfig(dir, domains)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "读取域名配置失败，使用内置域名: %v\n", err)
+			}
 		}
-		runCLI(tester.Config{
+		if err := runCLI(tester.Config{
 			Mode:        mode,
 			Interface:   *iface,
 			Domains:     domains,
 			DurationSec: *duration,
 			FailStop:    *failStop,
 			RatePerSec:  *rate,
-		})
+		}, *save); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 		return
 	}
 

@@ -20,8 +20,8 @@ const (
 	// MinRatePerSec and MaxRatePerSec bound the configurable attempt rate.
 	MinRatePerSec = 1
 	MaxRatePerSec = 1000
-	// MaxConnectionHold is how long one successful connection is kept open.
-	MaxConnectionHold = 60 * time.Second
+	// DefaultDurationSec is the default test duration in the GUI and CLI.
+	DefaultDurationSec = 360
 	// DialTimeout bounds one TCP handshake.
 	DialTimeout = 5 * time.Second
 	// DNSLookupTimeout bounds one name resolution.
@@ -31,7 +31,7 @@ const (
 	// dnsErrorTTL avoids hammering a name that failed to resolve.
 	dnsErrorTTL = 15 * time.Second
 	// FDSoftLimitTarget is attempted at startup.
-	FDSoftLimitTarget = 32768
+	FDSoftLimitTarget = 65536
 )
 
 // Mode selects which TCP ports are tested.
@@ -175,8 +175,6 @@ type Engine struct {
 	dialing   atomic.Int64
 	maxActive atomic.Int64
 
-	summaryErr atomic.Value // error
-
 	connMu  sync.Mutex
 	conns   map[uint64]net.Conn
 	connSeq atomic.Uint64
@@ -185,8 +183,8 @@ type Engine struct {
 	resolver *dnsResolver
 }
 
-// New validates cfg, opens the automatically saved CSV log, and prepares a
-// test engine. No connection is made until Start is called.
+// New validates cfg and prepares a private temporary journal. No connection is
+// made and no user-facing log is exported until Start and Export respectively.
 func New(cfg Config) (*Engine, error) {
 	cfg.Mode = Mode(strings.TrimSpace(string(cfg.Mode)))
 	ports := modePorts(cfg.Mode)
@@ -270,6 +268,7 @@ func New(cfg Config) (*Engine, error) {
 	}
 	e.ctx, e.cancel = context.WithCancel(context.Background())
 	e.reason.Store("")
+	logger.start(func() { e.stopWithReason("日志暂存失败") })
 	return e, nil
 }
 
@@ -296,7 +295,7 @@ func (e *Engine) Stop(reason string) {
 	e.stopWithReason(reason)
 }
 
-// Finished reports whether all connections are closed and logs are saved.
+// Finished reports whether all connections are closed and the journal is sealed.
 func (e *Engine) Finished() bool {
 	select {
 	case <-e.done:
@@ -306,7 +305,7 @@ func (e *Engine) Finished() bool {
 	}
 }
 
-// Wait blocks until the test has fully stopped and the summary is written.
+// Wait blocks until the test has fully stopped and the journal is sealed.
 func (e *Engine) Wait() {
 	<-e.done
 }
@@ -364,14 +363,7 @@ func (e *Engine) Snapshot() Snapshot {
 	if err := e.logger.err(); err != nil {
 		logError = err.Error()
 	}
-	if v := e.summaryErr.Load(); v != nil {
-		if err, ok := v.(error); ok && err != nil {
-			if logError != "" {
-				logError += "；"
-			}
-			logError += err.Error()
-		}
-	}
+	paths := e.logger.paths()
 
 	return Snapshot{
 		SessionID:      e.sessionID,
@@ -403,8 +395,8 @@ func (e *Engine) Snapshot() Snapshot {
 		FailStop:       e.cfg.FailStop,
 		RatePerSec:     e.cfg.RatePerSec,
 		StopReason:     reason,
-		LogPath:        e.logger.csvPath,
-		SummaryPath:    e.logger.summaryPath,
+		LogPath:        paths.LogPath,
+		SummaryPath:    paths.SummaryPath,
 		LogError:       logError,
 	}
 }
@@ -471,14 +463,7 @@ func (e *Engine) finish() {
 		e.reason.Store(reason)
 	}
 
-	snap := e.Snapshot()
-	snap.Finished = true
-	if err := e.logger.writeSummary(reason, &snap); err != nil {
-		e.summaryErr.Store(err)
-	}
-	if err := e.logger.close(); err != nil && e.summaryErr.Load() == nil {
-		e.summaryErr.Store(err)
-	}
+	e.logger.close(e.logSeq.Load())
 	close(e.done)
 }
 
@@ -593,9 +578,11 @@ func (e *Engine) writeEntry(entry LogEntry, now time.Time) {
 	e.logMu.Lock()
 	entry.Seq = e.logSeq.Add(1)
 	e.ring.add(entry)
+	err := e.logger.write(entry, now)
 	e.logMu.Unlock()
-
-	e.logger.write(entry, now)
+	if err != nil {
+		e.stopWithReason("日志暂存失败")
+	}
 }
 
 func (e *Engine) incrementActive() {
@@ -614,17 +601,7 @@ func (e *Engine) hold(conn net.Conn) {
 	e.conns[id] = conn
 	e.connMu.Unlock()
 
-	timer := time.NewTimer(MaxConnectionHold)
-	select {
-	case <-e.ctx.Done():
-	case <-timer.C:
-	}
-	if !timer.Stop() {
-		select {
-		case <-timer.C:
-		default:
-		}
-	}
+	<-e.ctx.Done()
 
 	_ = conn.Close()
 	e.connMu.Lock()

@@ -1,27 +1,36 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sync"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"tcplink/internal/appdir"
 	"tcplink/internal/syslimit"
 	"tcplink/internal/tester"
 )
 
 const (
 	version            = "1.0.0"
-	defaultGUIDuration = 60
+	defaultGUIDuration = tester.DefaultDurationSec
 	defaultGUIFailStop = 50
+	liveLogCapacity    = 600
 )
 
 type bootstrapData struct {
 	Domains            []string
+	BuiltinDomains     []string
 	Interfaces         []tester.InterfaceInfo
+	AppDir             string
+	ConfigPath         string
+	ConfigError        string
 	LogDir             string
 	FDLimit            syslimit.Info
 	DefaultRatePerSec  int
@@ -29,7 +38,6 @@ type bootstrapData struct {
 	DefaultFailStop    int
 	MinRatePerSec      int
 	MaxRatePerSec      int
-	MaxHoldSec         int
 	Version            string
 }
 
@@ -61,6 +69,8 @@ type guiController interface {
 	Sample(sessionID string, since uint64) <-chan result[sampleData]
 	Interfaces() <-chan result[[]tester.InterfaceInfo]
 	OpenLogs() <-chan result[struct{}]
+	SaveDomains([]string) <-chan result[[]string]
+	Export(sessionID string) <-chan result[tester.ExportResult]
 	Tail(sessionID string) (uint64, error)
 	Shutdown() <-chan struct{}
 }
@@ -74,30 +84,59 @@ type engine interface {
 	Finished() bool
 	Snapshot() tester.Snapshot
 	LogsSince(uint64, int) ([]tester.LogEntry, bool)
+	Export(string) (tester.ExportResult, error)
+	Discard() error
 }
 
 type App struct {
-	mu        sync.Mutex
-	engine    engine
-	sessionID string
-	starting  bool
-	closing   bool
-	jobs      sync.WaitGroup
-	done      chan struct{}
-	bootstrap bootstrapData
-	newEngine func(tester.Config) (engine, error)
+	mu             sync.Mutex
+	engine         engine
+	pendingCleanup []engine
+	sessionID      string
+	starting       bool
+	saving         bool
+	exporting      bool
+	closing        bool
+	jobs           sync.WaitGroup
+	done           chan struct{}
+	bootstrap      bootstrapData
+	newEngine      func(tester.Config) (engine, error)
 }
 
 func newApp(fdInfo syslimit.Info) *App {
-	logDir, _ := tester.LogDirectory()
+	dir, err := appdir.Directory()
+	a := newAppInDirectory(fdInfo, dir)
+	if err != nil {
+		a.bootstrap.ConfigError = fmt.Sprintf("无法确定应用目录: %v", err)
+	}
+	return a
+}
+
+func newAppInDirectory(fdInfo syslimit.Info, dir string) *App {
+	builtins := append([]string(nil), tester.BuiltinDomains...)
+	domains, configErr := loadDomainConfig(dir, builtins)
+	logDir, configPath := "", ""
+	if dir != "" && filepath.IsAbs(dir) {
+		logDir, configPath = filepath.Join(dir, "logs"), filepath.Join(dir, "domains.json")
+	} else {
+		dir = ""
+	}
+	configError := ""
+	if configErr != nil {
+		configError = configErr.Error()
+	}
 	return &App{
 		done: make(chan struct{}),
 		newEngine: func(cfg tester.Config) (engine, error) {
 			return tester.New(cfg)
 		},
 		bootstrap: bootstrapData{
-			Domains:            append([]string(nil), tester.BuiltinDomains...),
+			Domains:            domains,
+			BuiltinDomains:     builtins,
 			Interfaces:         tester.ListInterfaces(),
+			AppDir:             dir,
+			ConfigPath:         configPath,
+			ConfigError:        configError,
 			LogDir:             logDir,
 			FDLimit:            fdInfo,
 			DefaultRatePerSec:  tester.DefaultRatePerSec,
@@ -105,7 +144,6 @@ func newApp(fdInfo syslimit.Info) *App {
 			DefaultFailStop:    defaultGUIFailStop,
 			MinRatePerSec:      tester.MinRatePerSec,
 			MaxRatePerSec:      tester.MaxRatePerSec,
-			MaxHoldSec:         int(tester.MaxConnectionHold.Seconds()),
 			Version:            version,
 		},
 	}
@@ -146,8 +184,11 @@ func cloneInterfaces(src []tester.InterfaceInfo) []tester.InterfaceInfo {
 }
 
 func (a *App) Bootstrap() bootstrapData {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	data := a.bootstrap
 	data.Domains = append([]string(nil), data.Domains...)
+	data.BuiltinDomains = append([]string(nil), data.BuiltinDomains...)
 	data.Interfaces = cloneInterfaces(data.Interfaces)
 	return data
 }
@@ -167,7 +208,7 @@ func (a *App) Start(req startRequest) <-chan result[tester.Snapshot] {
 		a.mu.Unlock()
 		return reply(tester.Snapshot{}, fmt.Errorf("程序正在关闭"))
 	}
-	if a.starting || (a.engine != nil && !a.engine.Finished()) {
+	if a.starting || a.saving || a.exporting || (a.engine != nil && !a.engine.Finished()) {
 		a.mu.Unlock()
 		return reply(tester.Snapshot{}, fmt.Errorf("当前已有测试正在运行"))
 	}
@@ -190,11 +231,37 @@ func (a *App) Start(req startRequest) <-chan result[tester.Snapshot] {
 			ch <- result[tester.Snapshot]{Err: err}
 			return
 		}
+		a.mu.Lock()
+		old := a.engine
+		a.mu.Unlock()
+		if old != nil {
+			if err := old.Discard(); err != nil {
+				// The candidate has a private journal too. It must be started
+				// and stopped before its journal can be discarded.
+				e.Start()
+				e.Stop("启动取消")
+				e.Wait()
+				cleanupErr := e.Discard()
+				a.mu.Lock()
+				if cleanupErr != nil {
+					a.pendingCleanup = append(a.pendingCleanup, e)
+				}
+				a.starting = false
+				a.mu.Unlock()
+				startErr := fmt.Errorf("清理上一轮测试暂存失败，保留原会话: %w", err)
+				if cleanupErr != nil {
+					startErr = errors.Join(startErr, fmt.Errorf("清理候选测试暂存失败，将在关闭时重试: %w", cleanupErr))
+				}
+				ch <- result[tester.Snapshot]{Err: startErr}
+				return
+			}
+		}
 		e.Start()
 		snap := e.Snapshot()
 		a.mu.Lock()
-		a.engine, a.sessionID, a.starting = e, snap.SessionID, false
+		a.engine, a.sessionID = e, snap.SessionID
 		closing := a.closing
+		a.starting = false
 		a.mu.Unlock()
 		if closing {
 			e.Stop("程序关闭")
@@ -205,21 +272,27 @@ func (a *App) Start(req startRequest) <-chan result[tester.Snapshot] {
 }
 
 // sessionJob captures an engine and registers its work atomically with shutdown.
-func (a *App) sessionJob(sessionID string) (engine, error) {
+func (a *App) sessionJob(sessionID string, export bool) (engine, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closing {
 		return nil, fmt.Errorf("程序正在关闭")
 	}
+	if export && (a.starting || a.saving || a.exporting) {
+		return nil, fmt.Errorf("测试忙碌，无法导出")
+	}
 	if a.engine == nil || sessionID == "" || sessionID != a.sessionID {
 		return nil, fmt.Errorf("测试会话不存在或已更换")
+	}
+	if export {
+		a.exporting = true
 	}
 	a.jobs.Add(1)
 	return a.engine, nil
 }
 
 func (a *App) Stop(sessionID string) <-chan result[struct{}] {
-	e, err := a.sessionJob(sessionID)
+	e, err := a.sessionJob(sessionID, false)
 	if err != nil {
 		return reply(struct{}{}, err)
 	}
@@ -236,7 +309,7 @@ func (a *App) Stop(sessionID string) <-chan result[struct{}] {
 }
 
 func (a *App) Sample(sessionID string, since uint64) <-chan result[sampleData] {
-	e, err := a.sessionJob(sessionID)
+	e, err := a.sessionJob(sessionID, false)
 	if err != nil {
 		return reply(sampleData{}, err)
 	}
@@ -245,7 +318,11 @@ func (a *App) Sample(sessionID string, since uint64) <-chan result[sampleData] {
 		defer a.jobs.Done()
 		defer close(ch)
 		snap := e.Snapshot()
-		logs, dropped := e.LogsSince(since, 400)
+		limit := 400
+		if since == 0 {
+			limit = liveLogCapacity
+		}
+		logs, dropped := e.LogsSince(since, limit)
 		next := since
 		for _, entry := range logs {
 			if entry.Seq > next {
@@ -258,7 +335,7 @@ func (a *App) Sample(sessionID string, since uint64) <-chan result[sampleData] {
 }
 
 func (a *App) Tail(sessionID string) (uint64, error) {
-	e, err := a.sessionJob(sessionID)
+	e, err := a.sessionJob(sessionID, false)
 	if err != nil {
 		return 0, err
 	}
@@ -304,7 +381,9 @@ func (a *App) OpenLogs() <-chan result[struct{}] {
 		dir := a.bootstrap.LogDir
 		var err error
 		if dir == "" {
-			dir, err = tester.LogDirectory()
+			err = fmt.Errorf("应用目录不可用")
+		} else {
+			err = os.MkdirAll(dir, 0o755)
 		}
 		if err == nil {
 			err = openInFileManager(dir)
@@ -313,6 +392,62 @@ func (a *App) OpenLogs() <-chan result[struct{}] {
 			}
 		}
 		ch <- result[struct{}]{Err: err}
+	}()
+	return ch
+}
+
+func (a *App) SaveDomains(domains []string) <-chan result[[]string] {
+	domains = append([]string(nil), domains...)
+	a.mu.Lock()
+	if a.closing || a.starting || a.saving || a.exporting || (a.engine != nil && !a.engine.Finished()) {
+		a.mu.Unlock()
+		return reply([]string(nil), fmt.Errorf("程序正在关闭或测试忙碌，无法保存域名"))
+	}
+	a.saving = true
+	a.jobs.Add(1)
+	dir := a.bootstrap.AppDir
+	builtins := append([]string(nil), a.bootstrap.BuiltinDomains...)
+	a.mu.Unlock()
+	ch := make(chan result[[]string], 1)
+	go func() {
+		defer a.jobs.Done()
+		defer close(ch)
+		valid, err := saveDomainConfig(dir, domains, builtins)
+		a.mu.Lock()
+		if err == nil {
+			a.bootstrap.Domains = append([]string(nil), valid...)
+			a.bootstrap.ConfigError = ""
+		}
+		a.saving = false
+		a.mu.Unlock()
+		ch <- result[[]string]{Value: valid, Err: err}
+	}()
+	return ch
+}
+
+func (a *App) Export(sessionID string) <-chan result[tester.ExportResult] {
+	e, err := a.sessionJob(sessionID, true)
+	if err != nil {
+		return reply(tester.ExportResult{}, err)
+	}
+	dir := a.bootstrap.LogDir
+	ch := make(chan result[tester.ExportResult], 1)
+	go func() {
+		defer a.jobs.Done()
+		defer close(ch)
+		var value tester.ExportResult
+		var err error
+		if dir == "" {
+			err = fmt.Errorf("应用目录不可用，无法导出日志")
+		} else if !e.Finished() {
+			err = fmt.Errorf("测试尚未结束，无法导出日志")
+		} else {
+			value, err = e.Export(dir)
+		}
+		a.mu.Lock()
+		a.exporting = false
+		a.mu.Unlock()
+		ch <- result[tester.ExportResult]{Value: value, Err: err}
 	}()
 	return ch
 }
@@ -334,12 +469,21 @@ func (a *App) Shutdown() <-chan struct{} {
 		a.jobs.Wait()
 		a.mu.Lock()
 		e = a.engine
+		pending := append([]engine(nil), a.pendingCleanup...)
 		a.mu.Unlock()
 		if e != nil {
 			if !e.Finished() {
 				e.Stop("程序关闭")
 			}
 			e.Wait()
+			if err := e.Discard(); err != nil {
+				fmt.Fprintf(os.Stderr, "清理当前测试暂存失败: %v\n", err)
+			}
+		}
+		for _, candidate := range pending {
+			if err := candidate.Discard(); err != nil {
+				fmt.Fprintf(os.Stderr, "清理候选测试暂存失败: %v\n", err)
+			}
 		}
 		close(a.done)
 	}()

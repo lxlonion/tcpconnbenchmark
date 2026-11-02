@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/csv"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,11 +17,7 @@ import (
 
 func testApp(t *testing.T) *App {
 	t.Helper()
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, ".config"))
-	t.Setenv("AppData", filepath.Join(dir, "AppData"))
-	a := newApp(syslimit.Info{})
+	a := newAppInDirectory(syslimit.Info{}, t.TempDir())
 	t.Cleanup(func() { waitClosed(t, a.Shutdown()) })
 	return a
 }
@@ -74,11 +72,13 @@ func TestBootstrapDefaultsAndDeepCopy(t *testing.T) {
 		t.Fatal("missing builtin domains")
 	}
 	wantDomain := b.Domains[0]
+	wantBuiltin := b.BuiltinDomains[0]
 	b.Domains[0] = "changed"
+	b.BuiltinDomains[0] = "changed"
 	b.Interfaces[0].Name = "changed"
 	b.Interfaces[0].IPv4[0] = "changed"
 	again := a.Bootstrap()
-	if again.Domains[0] != wantDomain || again.Interfaces[0].Name != "test" || again.Interfaces[0].IPv4[0] != "192.0.2.1" {
+	if again.Domains[0] != wantDomain || again.BuiltinDomains[0] != wantBuiltin || again.Interfaces[0].Name != "test" || again.Interfaces[0].IPv4[0] != "192.0.2.1" {
 		t.Fatalf("Bootstrap exposes internal slices: %+v", again)
 	}
 }
@@ -100,13 +100,17 @@ func TestStartRejectsInvalidConfig(t *testing.T) {
 }
 
 type fakeEngine struct {
-	mu      sync.Mutex
-	session string
-	started bool
-	stops   int
-	logs    []tester.LogEntry
-	done    chan struct{}
-	once    sync.Once
+	mu           sync.Mutex
+	session      string
+	started      bool
+	stops        int
+	discarded    bool
+	discardErr   error
+	discardCalls int
+	waits        int
+	logs         []tester.LogEntry
+	done         chan struct{}
+	once         sync.Once
 }
 
 func newFakeEngine(id string) *fakeEngine { return &fakeEngine{session: id, done: make(chan struct{})} }
@@ -121,7 +125,12 @@ func (e *fakeEngine) Stop(string) {
 	e.mu.Unlock()
 	e.once.Do(func() { close(e.done) })
 }
-func (e *fakeEngine) Wait() { <-e.done }
+func (e *fakeEngine) Wait() {
+	e.mu.Lock()
+	e.waits++
+	e.mu.Unlock()
+	<-e.done
+}
 func (e *fakeEngine) Finished() bool {
 	select {
 	case <-e.done:
@@ -146,6 +155,50 @@ func (e *fakeEngine) LogsSince(since uint64, limit int) ([]tester.LogEntry, bool
 		}
 	}
 	return logs, false
+}
+
+func (e *fakeEngine) Export(dir string) (tester.ExportResult, error) {
+	return tester.ExportResult{LogPath: filepath.Join(dir, "fake.csv"), SummaryPath: filepath.Join(dir, "fake.txt")}, nil
+}
+func (e *fakeEngine) Discard() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.discardCalls++
+	if e.discardErr != nil {
+		return e.discardErr
+	}
+	e.discarded = true
+	return nil
+}
+
+func TestSampleInitialWindowAndIncrementalLimit(t *testing.T) {
+	a := testApp(t)
+	e := newFakeEngine("session")
+	for i := 1; i <= 1000; i++ {
+		e.logs = append(e.logs, tester.LogEntry{Seq: uint64(i)})
+	}
+	a.newEngine = func(tester.Config) (engine, error) { return e, nil }
+	if r := getResult(t, a.Start(validRequest())); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	initial := getResult(t, a.Sample("session", 0))
+	if initial.Err != nil {
+		t.Fatal(initial.Err)
+	}
+	if len(initial.Value.Logs) != 600 || initial.Value.Logs[0].Seq != 401 || initial.Value.Logs[599].Seq != 1000 || initial.Value.NextSeq != 1000 {
+		t.Fatalf("initial sample: %+v", initial.Value)
+	}
+	end := getResult(t, a.Sample("session", 1000))
+	if end.Err != nil || len(end.Value.Logs) != 0 || end.Value.NextSeq != 1000 {
+		t.Fatalf("end sample: %+v", end)
+	}
+	incremental := getResult(t, a.Sample("session", 1))
+	if incremental.Err != nil {
+		t.Fatal(incremental.Err)
+	}
+	if len(incremental.Value.Logs) != 400 || incremental.Value.Logs[0].Seq != 2 || incremental.Value.Logs[399].Seq != 401 || incremental.Value.NextSeq != 401 {
+		t.Fatalf("incremental sample: %+v", incremental.Value)
+	}
 }
 
 func TestStartReservationAndShutdownDuringConstruction(t *testing.T) {
@@ -294,7 +347,7 @@ func TestInFlightSampleUsesCapturedSession(t *testing.T) {
 	}
 }
 
-func TestShutdownStopsRunningEngineAndPersists(t *testing.T) {
+func TestShutdownStopsWithoutExport(t *testing.T) {
 	a := testApp(t)
 	started := getResult(t, a.Start(validRequest()))
 	if started.Err != nil {
@@ -319,18 +372,11 @@ func TestShutdownStopsRunningEngineAndPersists(t *testing.T) {
 	if !snap.Finished || snap.LogError != "" || snap.StopReason != "程序关闭" {
 		t.Fatalf("shutdown snapshot: %+v", snap)
 	}
-	f, err := os.Open(snap.LogPath)
-	if err != nil {
-		t.Fatal(err)
+	if snap.LogPath != "" || snap.SummaryPath != "" {
+		t.Fatalf("shutdown unexpectedly exported: %+v", snap)
 	}
-	rows, err := csv.NewReader(f).ReadAll()
-	f.Close()
-	if err != nil || uint64(len(rows)-1) != snap.Attempts {
-		t.Fatalf("CSV rows=%d attempts=%d err=%v", len(rows), snap.Attempts, err)
-	}
-	summary, err := os.ReadFile(snap.SummaryPath)
-	if err != nil || !strings.Contains(string(summary), "程序关闭") {
-		t.Fatalf("summary err=%v contents=%s", err, summary)
+	if _, err := os.Stat(a.bootstrap.LogDir); !os.IsNotExist(err) {
+		t.Fatalf("shutdown created logs directory: %v", err)
 	}
 }
 
@@ -341,6 +387,12 @@ func TestStopShutdownAndFinalLogsPersist(t *testing.T) {
 		t.Fatal(started.Err)
 	}
 	sid := started.Value.SessionID
+	if started.Value.LogPath != "" || started.Value.SummaryPath != "" {
+		t.Fatalf("start unexpectedly exported: %+v", started.Value)
+	}
+	if r := getResult(t, a.Export(sid)); r.Err == nil {
+		t.Fatal("export before completion accepted")
+	}
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		r := getResult(t, a.Sample(sid, 0))
@@ -370,6 +422,12 @@ func TestStopShutdownAndFinalLogsPersist(t *testing.T) {
 		t.Fatalf("final sample: %+v", r)
 	}
 	snap := r.Value.State
+	if snap.LogPath != "" || snap.SummaryPath != "" {
+		t.Fatalf("test automatically exported: %+v", snap)
+	}
+	if _, err := os.Stat(a.bootstrap.LogDir); !os.IsNotExist(err) {
+		t.Fatalf("test created logs directory: %v", err)
+	}
 	if uint64(len(r.Value.Logs)) != snap.Attempts {
 		t.Fatalf("logs=%d attempts=%d", len(r.Value.Logs), snap.Attempts)
 	}
@@ -381,7 +439,11 @@ func TestStopShutdownAndFinalLogsPersist(t *testing.T) {
 	if last.Err != nil || len(last.Value.Logs) != 0 {
 		t.Fatalf("tail sample: %+v", last)
 	}
-	f, err := os.Open(snap.LogPath)
+	exported := getResult(t, a.Export(sid))
+	if exported.Err != nil {
+		t.Fatal(exported.Err)
+	}
+	f, err := os.Open(exported.Value.LogPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,9 +452,183 @@ func TestStopShutdownAndFinalLogsPersist(t *testing.T) {
 	if err != nil || uint64(len(rows)-1) != snap.Attempts {
 		t.Fatalf("CSV rows=%d attempts=%d err=%v", len(rows), snap.Attempts, err)
 	}
-	summary, err := os.ReadFile(snap.SummaryPath)
+	summary, err := os.ReadFile(exported.Value.SummaryPath)
 	if err != nil || !strings.Contains(string(summary), "手动停止") {
 		t.Fatalf("summary err=%v contents=%s", err, summary)
 	}
 	waitClosed(t, a.Shutdown())
+}
+
+type blockedExportEngine struct {
+	*fakeEngine
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (e *blockedExportEngine) Export(dir string) (tester.ExportResult, error) {
+	close(e.entered)
+	<-e.release
+	return e.fakeEngine.Export(dir)
+}
+
+func TestExportCoordinatesStartAndShutdown(t *testing.T) {
+	a := testApp(t)
+	e := &blockedExportEngine{fakeEngine: newFakeEngine("first"), entered: make(chan struct{}), release: make(chan struct{})}
+	a.newEngine = func(tester.Config) (engine, error) { return e, nil }
+	if r := getResult(t, a.Start(validRequest())); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	if r := getResult(t, a.Stop("first")); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	exported := a.Export("first")
+	<-e.entered
+	if r := getResult(t, a.Start(validRequest())); r.Err == nil {
+		t.Fatal("start accepted during export")
+	}
+	if r := getResult(t, a.Export("first")); r.Err == nil {
+		t.Fatal("overlapping export accepted")
+	}
+	if r := getResult(t, a.SaveDomains([]string{"example.com"})); r.Err == nil {
+		t.Fatal("save accepted during export")
+	}
+	done := a.Shutdown()
+	select {
+	case <-done:
+		t.Fatal("shutdown completed before export")
+	default:
+	}
+	if r := getResult(t, a.Export("first")); r.Err == nil {
+		t.Fatal("export accepted during shutdown")
+	}
+	close(e.release)
+	if r := getResult(t, exported); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	waitClosed(t, done)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !e.discarded {
+		t.Fatal("shutdown did not discard engine")
+	}
+}
+
+func TestFailedStartRetainsOldEngineUntilReplacement(t *testing.T) {
+	a := testApp(t)
+	old, next := newFakeEngine("old"), newFakeEngine("next")
+	a.newEngine = func(tester.Config) (engine, error) { return old, nil }
+	if r := getResult(t, a.Start(validRequest())); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	if r := getResult(t, a.Stop("old")); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	a.newEngine = func(tester.Config) (engine, error) { return nil, errors.New("factory failed") }
+	if r := getResult(t, a.Start(validRequest())); r.Err == nil {
+		t.Fatal("factory failure not reported")
+	}
+	if r := getResult(t, a.Export("old")); r.Err != nil {
+		t.Fatalf("failed start lost old export: %v", r.Err)
+	}
+	old.mu.Lock()
+	discarded := old.discarded
+	old.mu.Unlock()
+	if discarded {
+		t.Fatal("failed start discarded old engine")
+	}
+	a.newEngine = func(tester.Config) (engine, error) { return next, nil }
+	if r := getResult(t, a.Start(validRequest())); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	old.mu.Lock()
+	discarded = old.discarded
+	old.mu.Unlock()
+	if !discarded {
+		t.Fatal("successful replacement did not discard old engine")
+	}
+	if r := getResult(t, a.Export("old")); r.Err == nil {
+		t.Fatal("stale session export accepted")
+	}
+}
+
+func TestDiscardFailureRetainsSessionAndRetriesCandidateOnShutdown(t *testing.T) {
+	a := testApp(t)
+	old, candidate := newFakeEngine("old"), newFakeEngine("candidate")
+	a.newEngine = func(tester.Config) (engine, error) { return old, nil }
+	if r := getResult(t, a.Start(validRequest())); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	if r := getResult(t, a.Stop("old")); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	old.mu.Lock()
+	old.discardErr = errors.New("/tmp/old-journal: permission denied")
+	old.mu.Unlock()
+	candidate.mu.Lock()
+	candidate.discardErr = errors.New("/tmp/candidate-journal: permission denied")
+	candidate.mu.Unlock()
+	a.newEngine = func(tester.Config) (engine, error) { return candidate, nil }
+	r := getResult(t, a.Start(validRequest()))
+	if r.Err == nil || !strings.Contains(r.Err.Error(), "/tmp/old-journal") || !strings.Contains(r.Err.Error(), "/tmp/candidate-journal") {
+		t.Fatalf("cleanup errors not reported: %v", r.Err)
+	}
+	if a.sessionID != "old" || a.engine != old || len(a.pendingCleanup) != 1 || a.pendingCleanup[0] != candidate {
+		t.Fatal("failed cleanup lost old session or candidate")
+	}
+	if r := getResult(t, a.Export("old")); r.Err != nil {
+		t.Fatalf("old session unavailable: %v", r.Err)
+	}
+	if r := getResult(t, a.Export("candidate")); r.Err == nil {
+		t.Fatal("candidate was published")
+	}
+	candidate.mu.Lock()
+	started, stops, waits, discards := candidate.started, candidate.stops, candidate.waits, candidate.discardCalls
+	candidate.discardErr = nil
+	candidate.mu.Unlock()
+	if !started || stops != 1 || waits != 1 || discards != 1 || !candidate.Finished() {
+		t.Fatalf("candidate not stopped and waited: started=%v stops=%d waits=%d discards=%d", started, stops, waits, discards)
+	}
+	old.mu.Lock()
+	old.discardErr = nil
+	old.mu.Unlock()
+	waitClosed(t, a.Shutdown())
+	for _, e := range []*fakeEngine{old, candidate} {
+		e.mu.Lock()
+		if !e.discarded || e.discardCalls != 2 {
+			t.Errorf("%s not retried: discarded=%v calls=%d", e.session, e.discarded, e.discardCalls)
+		}
+		e.mu.Unlock()
+	}
+}
+
+func TestShutdownReportsDiscardFailure(t *testing.T) {
+	a := testApp(t)
+	e := newFakeEngine("old")
+	e.discardErr = errors.New("/tmp/unremoved-journal: permission denied")
+	a.newEngine = func(tester.Config) (engine, error) { return e, nil }
+	if r := getResult(t, a.Start(validRequest())); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := os.Stderr
+	os.Stderr = writer
+	defer func() { os.Stderr = previous }()
+	waitClosed(t, a.Shutdown())
+	os.Stderr = previous
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	output, err := io.ReadAll(reader)
+	reader.Close()
+	if err != nil || !strings.Contains(string(output), "/tmp/unremoved-journal") {
+		t.Fatalf("shutdown did not report cleanup path: %q (%v)", output, err)
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.discardCalls != 1 || e.discarded {
+		t.Fatalf("unexpected cleanup state: calls=%d discarded=%v", e.discardCalls, e.discarded)
+	}
 }
