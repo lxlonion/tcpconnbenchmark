@@ -727,21 +727,11 @@ type dnsResolver struct {
 	cache       map[string]*dnsCacheEntry
 	inflight    map[string]*dnsCall
 	lookupIP    func(context.Context, string) ([]net.IP, error)
-	families    int
 	sourceCheck func(net.IP) error
 }
 
-const (
-	family4 = 1 << iota
-	family6
-)
-
 func (r *dnsResolver) checkIP(ip net.IP) error {
-	if ip.To4() != nil {
-		if r.families&family4 == 0 {
-			return fmt.Errorf("目标 IP 地址族与所选源地址不匹配")
-		}
-	} else if ip.To16() == nil || r.families&family6 == 0 {
+	if ip.To4() == nil && ip.To16() == nil {
 		return fmt.Errorf("目标 IP 地址族与所选源地址不匹配")
 	}
 	if r.sourceCheck != nil {
@@ -767,7 +757,6 @@ func newDNSResolver() *dnsResolver {
 	return &dnsResolver{
 		cache:    make(map[string]*dnsCacheEntry),
 		inflight: make(map[string]*dnsCall),
-		families: family4 | family6,
 		lookupIP: func(ctx context.Context, host string) ([]net.IP, error) {
 			return net.DefaultResolver.LookupIP(ctx, "ip", host)
 		},
