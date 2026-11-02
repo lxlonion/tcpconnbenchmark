@@ -26,6 +26,8 @@ type nativeView struct {
 	interfaces               []tester.InterfaceInfo
 	rate, duration, failStop string
 	message                  string
+	detailsOpen              bool
+	logsCleared              bool
 
 	snapshot                                 tester.Snapshot
 	session                                  string
@@ -136,6 +138,7 @@ func (v *nativeView) clearLogs() {
 	}
 	v.logEpoch++
 	v.entries = nil
+	v.logsCleared = true
 	v.since = tail
 	v.message = "已清空视图，完整结果未受影响"
 	if v.session != "" {
@@ -167,6 +170,7 @@ func (v *nativeView) acceptSample(r result[sampleData]) {
 		v.since = d.NextSeq
 	}
 	if len(d.Logs) > 0 {
+		v.logsCleared = false
 		for _, entry := range d.Logs {
 			v.entries = append(v.entries, entry)
 		}
@@ -198,6 +202,7 @@ func (v *nativeView) poll(now time.Time) {
 				v.snapshot = r.Value
 				v.exported = tester.ExportResult{}
 				v.entries = nil
+				v.logsCleared = false
 				v.since = 0
 				v.drained = false
 				v.nextSampleAt = time.Time{}
@@ -271,6 +276,7 @@ func (v *nativeView) poll(now time.Time) {
 					v.message = "保存域名失败：" + r.Err.Error()
 				} else {
 					v.domains = append([]string(nil), r.Value...)
+					v.boot.ConfigError = ""
 					v.editing = false
 					v.message = fmt.Sprintf("已保存并应用 %d 个域名，忽略 %d 个无效项", len(v.domains), v.saveDomainsIgnored)
 				}
@@ -364,7 +370,7 @@ func (v *nativeView) view(c *ui.Context) {
 		}
 		c.After(delay)
 	}
-	ui.Column(c).Fill().Padding(14).Gap(7).Children(func() {
+	ui.Column(c).Fill().Padding(14).Gap(8).Children(func() {
 		v.header(c)
 		if v.editing {
 			v.domainEditor(c)
@@ -378,85 +384,78 @@ func (v *nativeView) view(c *ui.Context) {
 }
 
 func (v *nativeView) header(c *ui.Context) {
-	status := "空闲"
-	switch {
-	case v.closing:
-		status = "正在关闭"
-	case v.startPending != nil:
-		status = "正在启动"
-	case v.snapshot.Finished:
-		status = "已结束"
-	case v.stopPending != nil || v.snapshot.Stopping:
-		status = "正在停止"
-	case v.session != "":
-		status = "运行中"
-	}
-	ui.Row(c).Gap(12).Children(func() {
-		ui.Text(c, "TCPLink").FontSize(22).Bold()
-		ui.Text(c, "TCP 并发连接测试 · 仅握手，不发送 HTTP / TLS 数据").Grow(1).SingleLine()
-		ui.Text(c, status).Bold()
+	ui.Row(c).Height(42).Gap(12).Children(func() {
+		ui.Column(c).Grow(1).Gap(2).Children(func() {
+			ui.Text(c, "TCPLink").FontSize(22).Bold()
+			ui.Text(c, "TCP 并发连接测试 · 仅握手，不发送 HTTP / TLS 数据").FontSize(11).TextColor(c.Theme().TextMuted).SingleLine()
+		})
+		v.lifecyclePill(c)
 	})
 }
 
 func (v *nativeView) form(c *ui.Context) {
 	locked := v.locked()
-	ui.Row(c).Gap(10).Children(func() {
-		ui.Column(c).Width(250).Gap(3).Children(func() {
-			ui.Text(c, "测试模式")
-			ui.Segmented(c.Key("mode"), &v.mode, "80 + 443", "80", "443").Label("测试模式").Disabled(locked)
-		})
-		ui.Column(c).Grow(1).Gap(3).Children(func() {
-			ui.Text(c, "出口网卡")
-			labels := []string{"自动（系统默认路由）"}
-			names := []string{""}
-			chosen := labels[0]
-			for _, i := range v.interfaces {
-				if i.IsUp && !i.IsLoop {
-					label := i.Label
-					if label == "" {
-						label = i.Name
-					}
-					labels = append(labels, label)
-					names = append(names, i.Name)
-					if v.iface == i.Name {
-						chosen = label
-					}
-				}
-			}
-			if ui.Select(c.Key("interface"), &chosen, labels).Label("出口网卡").Disabled(locked).Changed() {
-				for j, label := range labels {
-					if label == chosen {
-						v.iface = names[j]
-						break
+	ui.Column(c.Key("controls")).Padding(12).Gap(10).Radius(10).Border(1, c.Theme().Border).Children(func() {
+		ui.Row(c).Gap(12).AlignItems(ui.End).Children(func() {
+			ui.Column(c).Width(235).Gap(5).Children(func() {
+				ui.Text(c, "测试模式").FontSize(11).TextColor(c.Theme().TextMuted)
+				ui.Segmented(c.Key("mode"), &v.mode, "80 + 443", "80", "443").Height(32).Label("测试模式").Disabled(locked)
+			})
+			ui.Column(c).Grow(1).Gap(5).Children(func() {
+				ui.Text(c, "出口网卡").FontSize(11).TextColor(c.Theme().TextMuted)
+				labels := []string{"自动（系统默认路由）"}
+				names := []string{""}
+				chosen := labels[0]
+				for _, i := range v.interfaces {
+					if i.IsUp && !i.IsLoop {
+						label := i.Label
+						if label == "" {
+							label = i.Name
+						}
+						labels = append(labels, label)
+						names = append(names, i.Name)
+						if v.iface == i.Name {
+							chosen = label
+						}
 					}
 				}
+				if ui.Select(c.Key("interface"), &chosen, labels).Height(32).Label("出口网卡").Disabled(locked).Changed() {
+					for j, label := range labels {
+						if label == chosen {
+							v.iface = names[j]
+							break
+						}
+					}
+				}
+			})
+			if ui.Button(c.Key("refresh"), "刷新网卡").Height(32).Disabled(locked || v.interfacesPending != nil).Clicked() {
+				v.interfacesPending = v.controller.Interfaces()
 			}
 		})
-		if ui.Button(c.Key("refresh"), "刷新网卡").Disabled(locked || v.interfacesPending != nil).Clicked() {
-			v.interfacesPending = v.controller.Interfaces()
-		}
-	})
-	ui.Row(c).Gap(10).Children(func() {
-		v.numberField(c, "发起速率（次/秒）", "rate", &v.rate, locked)
-		v.numberField(c, "测试时长（秒）", "duration", &v.duration, locked)
-		v.numberField(c, "失败停止（0 不限）", "fail-stop", &v.failStop, locked)
-		if ui.Button(c.Key("domains"), fmt.Sprintf("域名 %d 个 · 编辑", len(v.domains))).Disabled(locked).Clicked() {
-			v.editDomains()
-		}
-		if v.session != "" && !v.snapshot.Finished {
-			if ui.Button(c.Key("stop"), "停止测试").Disabled(v.closing || v.stopPending != nil || v.snapshot.Stopping).Clicked() {
-				v.stop()
+		ui.Row(c).Gap(16).AlignItems(ui.End).Children(func() {
+			ui.Grid(c).Columns(3).Gap(12).Grow(1).Children(func() {
+				v.numberField(c, "发起速率（次/秒）", "rate", &v.rate, locked)
+				v.numberField(c, "测试时长（秒）", "duration", &v.duration, locked)
+				v.numberField(c, "失败停止（0 不限）", "fail-stop", &v.failStop, locked)
+			})
+			if ui.Button(c.Key("domains"), fmt.Sprintf("域名 %d 个 · 编辑", len(v.domains))).Height(36).Width(132).Border(1, c.Theme().Border).Disabled(locked).Clicked() {
+				v.editDomains()
 			}
-		} else if ui.PrimaryButton(c.Key("start"), "开始测试").Disabled(locked).Clicked() {
-			v.start()
-		}
+			if v.session != "" && !v.snapshot.Finished {
+				if ui.PrimaryButton(c.Key("stop"), "停止测试").Label("停止测试").Height(36).Width(110).FontSize(14).Bold().Disabled(v.closing || v.stopPending != nil || v.snapshot.Stopping).Clicked() {
+					v.stop()
+				}
+			} else if ui.PrimaryButton(c.Key("start"), "开始测试").Label("开始测试").Height(36).Width(110).FontSize(14).Bold().Disabled(locked).Clicked() {
+				v.start()
+			}
+		})
 	})
 }
 
 func (v *nativeView) numberField(c *ui.Context, label, key string, value *string, locked bool) {
-	ui.Column(c).Grow(1).Gap(3).Children(func() {
-		ui.Text(c, label)
-		ui.TextInput(c.Key(key), value).Label(label).Disabled(locked)
+	ui.Column(c).Gap(5).Children(func() {
+		ui.Text(c, label).FontSize(11).TextColor(c.Theme().TextMuted)
+		ui.TextInput(c.Key(key), value).Height(32).Font("monospace").Label(label).Disabled(locked)
 	})
 }
 
@@ -504,24 +503,14 @@ func (v *nativeView) stats(c *ui.Context) {
 			s.FailStop = failStop
 		}
 	}
-	rate := "—"
-	if s.Success+s.Failed > 0 {
-		rate = fmt.Sprintf("%.1f%%", s.SuccessRate)
-	}
-	ui.Row(c).Height(42).Padding(8, 12).Radius(8).Background(c.Theme().Surface).Children(func() {
-		text := fmt.Sprintf("尝试 %d    成功 %d    失败 %d    中止 %d    成功率 %s", s.Attempts, s.Success, s.Failed, s.Aborted, rate)
-		if v.startPending != nil || (v.session != "" && !s.Finished) {
-			text = fmt.Sprintf("进行中 %d    拨号中 %d    已关闭 %d    峰值 %d    平均 %.1f 次/秒", s.Active, s.Dialing, s.Closed, s.Max, s.AvgRate)
-		}
-		ui.Text(c, text).FontSize(16).Bold().TextColor(c.Theme().Accent).SingleLine()
-	})
+	v.kpiCards(c, s)
 	progress := 0.0
 	if s.DurationSec > 0 {
 		progress = min(1, max(0, s.ElapsedSec/float64(s.DurationSec)))
 	}
 	ui.Row(c).Gap(8).Children(func() {
-		ui.Text(c, fmt.Sprintf("已运行 %.0f 秒 · 剩余 %.0f 秒", s.ElapsedSec, s.Remaining))
-		ui.Progress(c.Key("progress"), progress).Label("测试进度").Grow(1)
+		ui.Text(c, fmt.Sprintf("已运行 %.0f 秒 · 剩余 %.0f 秒", s.ElapsedSec, s.Remaining)).FontFeatures("tnum").Bold().TextColor(c.Theme().Accent)
+		ui.Progress(c.Key("progress"), progress).Height(6).Label("测试进度").Grow(1)
 		if s.FailStop > 0 {
 			ui.Text(c, fmt.Sprintf("失败 %d / %d", s.Failed, s.FailStop))
 			ui.Progress(c.Key("failure-progress"), min(1, float64(s.Failed)/float64(s.FailStop))).Label("失败上限进度").Width(100)
@@ -533,7 +522,7 @@ func (v *nativeView) stats(c *ui.Context) {
 		ui.Text(c, "停止原因："+s.StopReason).SingleLine()
 	}
 	if s.LogError != "" {
-		ui.Text(c, "日志错误："+s.LogError).SingleLine()
+		ui.Text(c, "日志错误："+s.LogError).TextColor(c.Theme().Danger).SingleLine().Tooltip(s.LogError)
 	}
 }
 
@@ -558,30 +547,39 @@ func (v *nativeView) logs(c *ui.Context) {
 		v.scrollRequested = false
 		v.awaitingEnd = true
 	}
-	columns := []ui.TableColumn{{Title: "序号", Width: 65}, {Title: "时间", Width: 100}, {Title: "状态", Width: 60}, {Title: "域名", Width: 170}, {Title: "IP", Width: 130}, {Title: "端口", Width: 60}, {Title: "耗时", Width: 80}, {Title: "错误"}}
-	ui.Table(c.Key("log-table"), &v.table, columns, len(rows), func(row, col int) {
-		e := rows[row]
-		status := "失败"
-		if e.Aborted {
-			status = "中止"
-		} else if e.OK {
-			status = "成功"
+	ui.Box(c.Key("log-area")).Grow(1).MinHeight(50).Children(func() {
+		ui.Table(c.Key("log-table"), &v.table, logColumns(), len(rows), func(row, col int) {
+			e := rows[row]
+			logCell(c, e, col)
+		}).Label("连接日志").Fill()
+		if len(rows) == 0 {
+			ui.Box(c.Key("log-empty")).Absolute().Top(30).Bottom(0).Left(0).Right(0).Center().PassThrough().Children(func() {
+				ui.Text(c, v.emptyLogText()).TextColor(c.Theme().TextMuted).FontSize(13).SingleLine()
+			})
 		}
-		cells := []string{strconv.FormatUint(e.Seq, 10), e.Time, status, e.Domain, e.IP, strconv.Itoa(e.Port), fmt.Sprintf("%.1f ms", e.LatencyMS), e.Error}
-		ui.Text(c, cells[col]).SingleLine()
-	}).Label("连接日志").Grow(1).MinHeight(100)
+	})
 	v.tableBuilt = true
 }
 
 func (v *nativeView) footer(c *ui.Context) {
 	if v.message != "" {
-		ui.Text(c, v.message).SingleLine()
+		color := c.Theme().TextMuted
+		if strings.Contains(v.message, "失败") {
+			color = c.Theme().Danger
+		}
+		ui.Text(c, v.message).TextColor(color).SingleLine().Tooltip(v.message)
+	}
+	if v.boot.ConfigError != "" && v.message != "域名配置读取失败："+v.boot.ConfigError {
+		ui.Text(c, "域名配置读取失败："+v.boot.ConfigError).TextColor(c.Theme().Danger).SingleLine().Tooltip(v.boot.ConfigError)
 	}
 	if v.session != "" && v.snapshot.Finished && (v.snapshot.LogPath == "" || v.snapshot.SummaryPath == "") {
 		ui.Text(c, "结果尚未保存，开始新测试或关闭后丢失").TextColor(c.Theme().Accent).SingleLine()
 	}
 	ui.Row(c).Gap(8).Children(func() {
-		ui.Text(c, "日志目录："+v.boot.LogDir).Grow(1).SingleLine()
+		if ui.Button(c.Key("storage-details"), "文件与路径").Label("文件与路径").Tooltip("显示或隐藏存储路径；支持完整复制").Clicked() {
+			v.detailsOpen = !v.detailsOpen
+		}
+		ui.Spacer(c)
 		if ui.Button(c.Key("open-logs"), "打开目录").Disabled(v.closing || v.openPending != nil).Clicked() {
 			v.openPending = v.controller.OpenLogs()
 		}
@@ -593,26 +591,8 @@ func (v *nativeView) footer(c *ui.Context) {
 			v.exportResults()
 		}
 	})
-	ui.Row(c).Gap(8).Children(func() {
-		ui.Text(c, "应用目录：")
-		ui.TextInput(c.Key("app-dir"), &v.boot.AppDir).Label("应用目录").ReadOnly(true).Grow(1)
-		ui.Text(c, "域名配置：")
-		ui.TextInput(c.Key("config-path"), &v.boot.ConfigPath).Label("域名配置路径").ReadOnly(true).Grow(1)
-	})
-	ui.Row(c).Gap(8).Children(func() {
-		ui.Text(c, "CSV：").Width(55)
-		ui.TextInput(c.Key("csv-path"), &v.snapshot.LogPath).Label("CSV 日志路径").ReadOnly(true).Grow(1)
-	})
-	ui.Row(c).Gap(8).Children(func() {
-		ui.Text(c, "摘要：").Width(55)
-		ui.TextInput(c.Key("summary-path"), &v.snapshot.SummaryPath).Label("摘要文件路径").ReadOnly(true).Grow(1)
-	})
-	fd := "文件句柄：当前平台不适用"
-	if v.boot.FDLimit.Supported {
-		fd = fmt.Sprintf("文件句柄 %d / 硬上限 %d", v.boot.FDLimit.Soft, v.boot.FDLimit.Hard)
+	if v.detailsOpen {
+		v.storageDetails(c)
 	}
-	if v.boot.FDLimit.Error != "" {
-		fd += " · " + v.boot.FDLimit.Error
-	}
-	ui.Text(c, fd+"    TCPLink v"+v.boot.Version).SingleLine()
+	v.statusBar(c)
 }

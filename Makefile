@@ -1,24 +1,27 @@
 BINARY ?= TCPLink
 APP    := TCPLink.app
 GOFLAGS ?=
-LDFLAGS := -s -w
+LDFLAGS ?= -s -w
+HOST_GOOS = $(shell GOFLAGS= go env GOHOSTOS)
+HOST_GOARCH = $(shell GOFLAGS= go env GOHOSTARCH)
+
+export GOFLAGS
+export TCPLINK_BUILD_BINARY := $(BINARY)
+export TCPLINK_BUILD_APP := $(APP)
+export TCPLINK_BUILD_LDFLAGS := $(LDFLAGS)
+export TCPLINK_TARGET_GOOS = $(if $(GOOS),$(GOOS),$(shell GOFLAGS= go env GOOS))
+export TCPLINK_TARGET_GOARCH = $(if $(GOARCH),$(GOARCH),$(shell GOFLAGS= go env GOARCH))
 
 .PHONY: build app run test vet clean
 
 build:
-	CGO_ENABLED=0 go build $(GOFLAGS) -trimpath -ldflags "$(LDFLAGS)" -o $(BINARY) .
+	GOOS=$(HOST_GOOS) GOARCH=$(HOST_GOARCH) GOFLAGS= CGO_ENABLED=0 go run -buildvcs=false ./scripts/buildmeta build $(GOFLAGS)
 
-app: build
-	@if [ "$$(uname -s)" != "Darwin" ]; then echo "make app 仅支持 macOS"; exit 1; fi
-	rm -rf $(APP)
-	mkdir -p $(APP)/Contents/MacOS
-	cp packaging/Info.plist $(APP)/Contents/Info.plist
-	cp $(BINARY) $(APP)/Contents/MacOS/TCPLink
-	codesign --force --deep --sign - $(APP) >/dev/null 2>&1 || true
-	@echo "已生成 $(APP)，运行: open $(APP)"
+app:
+	GOOS=$(HOST_GOOS) GOARCH=$(HOST_GOARCH) GOFLAGS= CGO_ENABLED=0 go run -buildvcs=false ./scripts/buildmeta app $(GOFLAGS)
 
 run:
-	CGO_ENABLED=0 go run .
+	GOOS=$(HOST_GOOS) GOARCH=$(HOST_GOARCH) GOFLAGS= CGO_ENABLED=0 go run -buildvcs=false ./scripts/buildmeta run $(GOFLAGS)
 
 test:
 	CGO_ENABLED=0 go test ./...

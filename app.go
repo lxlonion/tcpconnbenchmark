@@ -13,12 +13,12 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"tcplink/internal/appdir"
+	"tcplink/internal/buildinfo"
 	"tcplink/internal/syslimit"
 	"tcplink/internal/tester"
 )
 
 const (
-	version            = "1.0.0"
 	defaultGUIFailStop = 50
 	liveLogCapacity    = 600
 )
@@ -143,7 +143,7 @@ func newAppInDirectory(fdInfo syslimit.Info, dir string) *App {
 			DefaultFailStop:    defaultGUIFailStop,
 			MinRatePerSec:      tester.MinRatePerSec,
 			MaxRatePerSec:      tester.MaxRatePerSec,
-			Version:            version,
+			Version:            buildinfo.Label(),
 		},
 	}
 }

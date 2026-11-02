@@ -41,6 +41,8 @@
 
 以上系统要求参考 [MyGo 文档](https://github.com/egoist/mygo/blob/main/docs/README.md#requirements)，不代表本项目已经在每种系统和架构上实测。
 
+`make run` 构建并运行与 `make build` 相同的 `BINARY` 目标（默认 `./TCPLink`），数据保存在该可执行文件的便携目录，不会因命令退出而删除。直接 `go run .` 仍使用 Go 的临时可执行文件路径，其旁的数据不适合作为持久保存位置。
+
 ### macOS
 
 ```bash
@@ -57,6 +59,12 @@ open TCPLink.app
 ```
 
 `make app` 会尝试进行 ad-hoc 签名（`codesign --sign -`）；签名失败不会中止打包。对外分发需要你自己的开发者签名和公证。
+
+### 构建标识
+
+`make build`、`make app` 和 `make run` 在构建时记录 Git 分支、提交和工作区状态。普通开发构建显示如 `master@01b0d35`，有未提交变更时追加 `+dirty`；detached HEAD 显示 `detached@<提交>`。只有当前提交带有精确的稳定语义版本 tag（例如 `v1.2.3`），且工作区干净，才显示该版本号；预发行 tag 不视为正式发行。构建不会创建 tag。
+
+这些信息已嵌入二进制，移动应用或在未安装 Git 的机器上运行不影响显示。直接使用 `go build` 或 `go run` 时，Go 内嵌的 VCS 信息可用则显示 `dev@<提交>`（不会猜测分支），否则显示“开发构建未知提交”。开发版 `.app` 不声明发行版短版本；正式版才将 tag 的数字部分写入 `CFBundleShortVersionString`。
 
 ### 其他平台
 

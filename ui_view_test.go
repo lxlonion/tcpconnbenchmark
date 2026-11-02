@@ -145,6 +145,12 @@ func TestNativeViewLongPathsAccessible(t *testing.T) {
 	v.snapshot.SummaryPath = "/portable/TCPLink/logs/" + strings.Repeat("very-long-directory/", 8) + "result.summary.txt"
 	csvPath, summaryPath := v.snapshot.LogPath, v.snapshot.SummaryPath
 	tt := ui.NewTester(v.view, 900, 650)
+	if _, ok := tt.Find("CSV 日志路径"); ok {
+		t.Fatal("paths should be collapsed by default")
+	}
+	if err := tt.Click("文件与路径"); err != nil {
+		t.Fatal(err)
+	}
 	for _, item := range []struct{ label, want string }{{"CSV 日志路径", v.snapshot.LogPath}, {"摘要文件路径", v.snapshot.SummaryPath}} {
 		r, ok := tt.Find(item.label)
 		if !ok || r.X < 0 || r.Y < 0 || r.W <= 0 || r.H <= 0 || r.X+r.W > 900 || r.Y+r.H > 650 {
@@ -163,7 +169,7 @@ func TestNativeViewLongPathsAccessible(t *testing.T) {
 			t.Fatal("read-only path was modified")
 		}
 	}
-	for _, label := range []string{"打开目录", "文件句柄：当前平台不适用    TCPLink vtest"} {
+	for _, label := range []string{"打开目录", "文件句柄状态", "版本"} {
 		r, ok := tt.Find(label)
 		if !ok || r.Y < 0 || r.Y+r.H > 650 {
 			t.Fatalf("footer item %q outside window: %+v found=%v", label, r, ok)
@@ -425,8 +431,8 @@ func TestNativeViewStatsExclusiveAndLayout(t *testing.T) {
 	v := newNativeView(s)
 	tt := ui.NewTester(v.view, 900, 650)
 	width, height := float32(900), float32(650)
-	finished := "尝试 0    成功 0    失败 0    中止 0    成功率 —"
-	running := "进行中 0    拨号中 0    已关闭 0    峰值 0    平均 0.0 次/秒"
+	finished := "指标：尝试"
+	running := "指标：进行中"
 	check := func(want, absent string) ui.Rect {
 		t.Helper()
 		r, ok := tt.Find(want)
@@ -468,9 +474,11 @@ func TestNativeViewFiltersAndCap(t *testing.T) {
 	v.entries = []tester.LogEntry{{Seq: 1, OK: true}, {Seq: 2}, {Seq: 3, Aborted: true}}
 	tt := ui.NewTester(v.view, 900, 650)
 	for i, label := range []string{"全部", "成功", "失败", "中止"} {
-		if err := tt.Click(label); err != nil {
-			t.Fatal(err)
+		r, ok := tt.Find("日志筛选")
+		if !ok {
+			t.Fatal("missing log filter")
 		}
+		tt.ClickAt(r.X+r.W*(float32(i)+.5)/4, r.Y+r.H/2)
 		if v.filter != i {
 			t.Fatalf("filter %q selected %d", label, v.filter)
 		}
