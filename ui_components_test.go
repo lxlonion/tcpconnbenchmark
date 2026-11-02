@@ -298,7 +298,8 @@ func TestPolishedWarningsStayVisible(t *testing.T) {
 	v.snapshot.LogError = "测试记录暂存异常"
 	v.message = "保存结果失败：目录不可写"
 	tt := ui.NewTester(v.view, 900, 650)
-	for _, label := range []string{"域名配置读取失败：" + v.boot.ConfigError, "日志错误：" + v.snapshot.LogError, v.message, "结果尚未保存，开始新测试或关闭后丢失"} {
+	warnings := []string{"域名配置读取失败：" + v.boot.ConfigError, "日志错误：" + v.snapshot.LogError, v.message, "结果尚未保存，开始新测试或关闭后丢失"}
+	for _, label := range warnings {
 		assertInViewport(t, tt, label, 900, 650)
 	}
 	if v.detailsOpen {
@@ -306,6 +307,9 @@ func TestPolishedWarningsStayVisible(t *testing.T) {
 	}
 	if err := tt.Click("日志"); err != nil {
 		t.Fatal(err)
+	}
+	for _, label := range warnings {
+		assertInViewport(t, tt, label, 900, 650)
 	}
 	for _, label := range []string{"应用目录", "域名配置路径", "CSV 日志路径", "摘要文件路径", "文件句柄状态", "版本"} {
 		assertInViewport(t, tt, label, 900, 650)

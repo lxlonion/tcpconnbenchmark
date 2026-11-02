@@ -540,6 +540,12 @@ func (v *nativeView) logs(c *ui.Context) {
 }
 
 func (v *nativeView) footer(c *ui.Context) {
+	ui.Column(c.Key("footer")).Gap(3).Children(func() {
+		v.footerContents(c)
+	})
+}
+
+func (v *nativeView) footerContents(c *ui.Context) {
 	if v.message != "" {
 		color := c.Theme().TextMuted
 		if strings.Contains(v.message, "失败") {

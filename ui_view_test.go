@@ -517,7 +517,11 @@ func TestNativeViewFollowStopsOnScrollAndCanResume(t *testing.T) {
 	if !v.follow || !v.table.AtEnd() {
 		t.Fatal("initial follow did not reach the end")
 	}
-	tt.Scroll(400, 400, 0, -220)
+	r, ok := tt.Find("连接日志")
+	if !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.Y < 0 || r.X+r.W > 900 || r.Y+r.H > 650 {
+		t.Fatalf("log table missing or outside viewport: %+v found=%v", r, ok)
+	}
+	tt.Scroll(r.X+r.W/2, r.Y+r.H/2, 0, -220)
 	if v.follow {
 		t.Fatal("scrolling away should disable follow")
 	}
