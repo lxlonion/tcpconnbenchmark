@@ -45,7 +45,6 @@ type nativeView struct {
 	interfacesPending                        <-chan result[[]tester.InterfaceInfo]
 	openPending                              <-chan result[struct{}]
 	saveDomainsPending                       <-chan result[[]string]
-	saveDomainsRequested                     []string
 	saveDomainsIgnored                       int
 	exportPending                            <-chan result[tester.ExportResult]
 	exportGeneration                         uint64
@@ -333,8 +332,7 @@ func (v *nativeView) applyDomains() {
 		return
 	}
 	v.saveDomainsIgnored = len(invalid)
-	v.saveDomainsRequested = append([]string(nil), valid...)
-	v.saveDomainsPending = v.controller.SaveDomains(append([]string(nil), v.saveDomainsRequested...))
+	v.saveDomainsPending = v.controller.SaveDomains(valid)
 	v.message = "正在保存域名…"
 }
 

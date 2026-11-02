@@ -1,12 +1,15 @@
 package tester
 
 import (
+	"context"
 	"encoding/csv"
 	"net"
 	"os"
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -125,6 +128,48 @@ func TestAttemptAfterCancelIsNotCounted(t *testing.T) {
 	}
 	if logs, _ := e.LogsSince(0, 10); len(logs) != 0 {
 		t.Fatalf("canceled attempt produced %d log entries", len(logs))
+	}
+}
+
+func TestStopBeforeStartSealsEmptyJournal(t *testing.T) {
+	cfg := baseConfig()
+	cfg.Domains = []string{"example.com"}
+	e := newTestEngine(t, cfg)
+	var lookups, dials atomic.Int32
+	e.resolver.lookupIP = func(context.Context, string) ([]net.IP, error) {
+		lookups.Add(1)
+		return []net.IP{net.IPv4(127, 0, 0, 1)}, nil
+	}
+	e.dialer.Control = func(string, string, syscall.RawConn) error {
+		dials.Add(1)
+		return nil
+	}
+
+	e.Stop("预先取消")
+	e.Start()
+	select {
+	case <-e.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pre-canceled engine did not finish")
+	}
+	snap := e.Snapshot()
+	if !snap.Finished || snap.StopReason != "预先取消" || snap.Attempts != 0 || snap.Success != 0 || snap.Failed != 0 || snap.Aborted != 0 || snap.Active != 0 || snap.Dialing != 0 || snap.LogError != "" {
+		t.Fatalf("unexpected snapshot: %+v", snap)
+	}
+	if lookups.Load() != 0 || dials.Load() != 0 {
+		t.Fatalf("network activity: lookups=%d dials=%d", lookups.Load(), dials.Load())
+	}
+	if logs, _ := e.LogsSince(0, 10); len(logs) != 0 {
+		t.Fatalf("unexpected live logs: %+v", logs)
+	}
+	if rows := readResultCSV(t, exportTestResult(t, e).LogPath); len(rows) != 0 {
+		t.Fatalf("unexpected CSV rows: %v", rows)
+	}
+	if err := e.Discard(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(e.logger.tempDir); !os.IsNotExist(err) {
+		t.Fatalf("temporary journal remains: %v", err)
 	}
 }
 

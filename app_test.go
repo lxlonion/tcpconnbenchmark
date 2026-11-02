@@ -65,7 +65,7 @@ func TestBootstrapDefaultsAndDeepCopy(t *testing.T) {
 	// Make nested IPv4 ownership deterministic even on hosts with no interfaces.
 	a.bootstrap.Interfaces = []tester.InterfaceInfo{{Name: "test", IPv4: []string{"192.0.2.1"}}}
 	b := a.Bootstrap()
-	if b.DefaultDurationSec != defaultGUIDuration || b.DefaultFailStop != defaultGUIFailStop || b.DefaultRatePerSec != tester.DefaultRatePerSec {
+	if b.DefaultDurationSec != tester.DefaultDurationSec || b.DefaultFailStop != defaultGUIFailStop || b.DefaultRatePerSec != tester.DefaultRatePerSec {
 		t.Fatalf("unexpected defaults: %+v", b)
 	}
 	if len(b.Domains) == 0 {
@@ -103,6 +103,7 @@ type fakeEngine struct {
 	mu           sync.Mutex
 	session      string
 	started      bool
+	attempts     int
 	stops        int
 	discarded    bool
 	discardErr   error
@@ -116,6 +117,9 @@ type fakeEngine struct {
 func newFakeEngine(id string) *fakeEngine { return &fakeEngine{session: id, done: make(chan struct{})} }
 func (e *fakeEngine) Start() {
 	e.mu.Lock()
+	if e.stops == 0 {
+		e.attempts++
+	}
 	e.started = true
 	e.mu.Unlock()
 }
@@ -140,7 +144,7 @@ func (e *fakeEngine) Finished() bool {
 	}
 }
 func (e *fakeEngine) Snapshot() tester.Snapshot {
-	return tester.Snapshot{SessionID: e.session, HasEngine: true, Finished: e.Finished()}
+	return tester.Snapshot{SessionID: e.session, Finished: e.Finished()}
 }
 func (e *fakeEngine) LogsSince(since uint64, limit int) ([]tester.LogEntry, bool) {
 	e.mu.Lock()
@@ -241,8 +245,8 @@ func TestStartReservationAndShutdownDuringConstruction(t *testing.T) {
 	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if !fake.started || fake.stops == 0 || !fake.Finished() {
-		t.Fatalf("shutdown missed starting engine: started=%v stops=%d", fake.started, fake.stops)
+	if !fake.started || fake.stops == 0 || !fake.Finished() || fake.attempts != 0 {
+		t.Fatalf("shutdown missed pre-canceling engine: started=%v stops=%d attempts=%d", fake.started, fake.stops, fake.attempts)
 	}
 }
 
@@ -582,11 +586,11 @@ func TestDiscardFailureRetainsSessionAndRetriesCandidateOnShutdown(t *testing.T)
 		t.Fatal("candidate was published")
 	}
 	candidate.mu.Lock()
-	started, stops, waits, discards := candidate.started, candidate.stops, candidate.waits, candidate.discardCalls
+	started, stops, waits, discards, attempts := candidate.started, candidate.stops, candidate.waits, candidate.discardCalls, candidate.attempts
 	candidate.discardErr = nil
 	candidate.mu.Unlock()
-	if !started || stops != 1 || waits != 1 || discards != 1 || !candidate.Finished() {
-		t.Fatalf("candidate not stopped and waited: started=%v stops=%d waits=%d discards=%d", started, stops, waits, discards)
+	if !started || stops != 1 || waits != 1 || discards != 1 || attempts != 0 || !candidate.Finished() {
+		t.Fatalf("candidate cleanup: started=%v stops=%d waits=%d discards=%d attempts=%d", started, stops, waits, discards, attempts)
 	}
 	old.mu.Lock()
 	old.discardErr = nil
@@ -598,6 +602,46 @@ func TestDiscardFailureRetainsSessionAndRetriesCandidateOnShutdown(t *testing.T)
 			t.Errorf("%s not retried: discarded=%v calls=%d", e.session, e.discarded, e.discardCalls)
 		}
 		e.mu.Unlock()
+	}
+}
+
+func TestDiscardFailureCleansCandidateAndAllowsStartRetry(t *testing.T) {
+	a := testApp(t)
+	old, candidate, next := newFakeEngine("old"), newFakeEngine("candidate"), newFakeEngine("next")
+	a.newEngine = func(tester.Config) (engine, error) { return old, nil }
+	if r := getResult(t, a.Start(validRequest())); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	if r := getResult(t, a.Stop("old")); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	old.mu.Lock()
+	old.discardErr = errors.New("old cleanup failed")
+	old.mu.Unlock()
+	a.newEngine = func(tester.Config) (engine, error) { return candidate, nil }
+	if r := getResult(t, a.Start(validRequest())); r.Err == nil || !strings.Contains(r.Err.Error(), "old cleanup failed") {
+		t.Fatalf("old cleanup failure not reported: %v", r.Err)
+	}
+	if r := getResult(t, a.Sample("old", 0)); r.Err != nil || r.Value.State.SessionID != "old" {
+		t.Fatalf("old session lost: %+v", r)
+	}
+	candidate.mu.Lock()
+	if !candidate.started || candidate.attempts != 0 || candidate.stops != 1 || candidate.waits != 1 || !candidate.discarded || candidate.discardCalls != 1 {
+		t.Errorf("candidate cleanup: started=%v attempts=%d stops=%d waits=%d discarded=%v calls=%d", candidate.started, candidate.attempts, candidate.stops, candidate.waits, candidate.discarded, candidate.discardCalls)
+	}
+	candidate.mu.Unlock()
+	if len(a.pendingCleanup) != 0 {
+		t.Fatal("successfully discarded candidate retained for retry")
+	}
+	old.mu.Lock()
+	old.discardErr = nil
+	old.mu.Unlock()
+	a.newEngine = func(tester.Config) (engine, error) { return next, nil }
+	if r := getResult(t, a.Start(validRequest())); r.Err != nil || r.Value.SessionID != "next" {
+		t.Fatalf("start retry failed: %+v", r)
+	}
+	if r := getResult(t, a.Sample("old", 0)); r.Err == nil {
+		t.Fatal("old session still published after successful retry")
 	}
 }
 

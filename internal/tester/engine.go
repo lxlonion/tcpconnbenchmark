@@ -72,12 +72,12 @@ func modePorts(m Mode) []int {
 
 // Config describes one test session.
 type Config struct {
-	Mode        Mode     `json:"mode"`
-	Interface   string   `json:"interface"`
-	Domains     []string `json:"domains"`
-	DurationSec int      `json:"durationSec"`
-	FailStop    int      `json:"failStop"`
-	RatePerSec  int      `json:"ratePerSec"`
+	Mode        Mode
+	Interface   string
+	Domains     []string
+	DurationSec int
+	FailStop    int
+	RatePerSec  int
 }
 
 type target struct {
@@ -87,57 +87,51 @@ type target struct {
 
 // LogEntry is one line in the live log and the CSV file.
 type LogEntry struct {
-	Seq       uint64  `json:"seq"`
-	Time      string  `json:"time"`
-	Domain    string  `json:"domain"`
-	IP        string  `json:"ip"`
-	Port      int     `json:"port"`
-	OK        bool    `json:"ok"`
-	Aborted   bool    `json:"aborted"`
-	LatencyMS float64 `json:"latencyMs"`
-	Error     string  `json:"error,omitempty"`
+	Seq       uint64
+	Time      string
+	Domain    string
+	IP        string
+	Port      int
+	OK        bool
+	Aborted   bool
+	LatencyMS float64
+	Error     string
 }
 
 // Snapshot is the live state polled by the front end.
 type Snapshot struct {
-	SessionID string `json:"sessionId"`
-	Running   bool   `json:"running"`
-	Stopping  bool   `json:"stopping"`
-	Finished  bool   `json:"finished"`
-	HasEngine bool   `json:"hasEngine"`
+	SessionID string
+	Stopping  bool
+	Finished  bool
 
-	StartedAt string `json:"startedAt"`
-	EndedAt   string `json:"endedAt"`
+	EndedAt string
 
-	DurationSec int     `json:"durationSec"`
-	ElapsedSec  float64 `json:"elapsedSec"`
-	Remaining   float64 `json:"remainingSec"`
+	DurationSec int
+	ElapsedSec  float64
+	Remaining   float64
 
-	Attempts uint64 `json:"attempts"`
-	Success  uint64 `json:"success"`
-	Failed   uint64 `json:"failed"`
-	Aborted  uint64 `json:"aborted"`
-	Active   int64  `json:"active"`
-	Dialing  int64  `json:"dialing"`
-	Closed   uint64 `json:"closed"`
-	Max      int64  `json:"maxActive"`
+	Attempts uint64
+	Success  uint64
+	Failed   uint64
+	Aborted  uint64
+	Active   int64
+	Dialing  int64
+	Closed   uint64
+	Max      int64
 
-	SuccessRate float64 `json:"successRate"`
-	AvgRate     float64 `json:"avgRate"`
+	SuccessRate float64
+	AvgRate     float64
 
-	Mode           string `json:"mode"`
-	ModeLabel      string `json:"modeLabel"`
-	Interface      string `json:"interface"`
-	InterfaceLabel string `json:"interfaceLabel"`
-	DomainCount    int    `json:"domainCount"`
-	TargetCount    int    `json:"targetCount"`
-	FailStop       int    `json:"failStop"`
-	RatePerSec     int    `json:"ratePerSec"`
+	ModeLabel      string
+	InterfaceLabel string
+	DomainCount    int
+	FailStop       int
+	RatePerSec     int
 
-	StopReason  string `json:"stopReason"`
-	LogPath     string `json:"logPath"`
-	SummaryPath string `json:"summaryPath"`
-	LogError    string `json:"logError,omitempty"`
+	StopReason  string
+	LogPath     string
+	SummaryPath string
+	LogError    string
 }
 
 // Engine owns one running test. Create it with New, then call Start.
@@ -147,7 +141,6 @@ type Engine struct {
 	targets    []target
 	ifaceLabel string
 	dialer     *net.Dialer
-	fdInfo     syslimit.Info
 
 	logger    *resultLogger
 	sessionID string
@@ -160,7 +153,6 @@ type Engine struct {
 	done     chan struct{}
 	stopOnce sync.Once
 	reason   atomic.Value // string
-	running  atomic.Bool
 	stopping atomic.Bool
 
 	startedAt atomic.Int64
@@ -231,8 +223,6 @@ func New(cfg Config) (*Engine, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg.Interface = ifaceName(iface)
-
 	dialer := &net.Dialer{
 		Timeout:   DialTimeout,
 		KeepAlive: 30 * time.Second,
@@ -253,7 +243,6 @@ func New(cfg Config) (*Engine, error) {
 		domains:    domains,
 		ifaceLabel: ifaceLabel,
 		dialer:     dialer,
-		fdInfo:     fdInfo,
 		logger:     logger,
 		sessionID:  logger.sessionID,
 		ring:       newLogRing(4096),
@@ -272,17 +261,9 @@ func New(cfg Config) (*Engine, error) {
 	return e, nil
 }
 
-func ifaceName(iface *net.Interface) string {
-	if iface == nil {
-		return ""
-	}
-	return iface.Name
-}
-
 // Start begins the test loop in a background goroutine.
 func (e *Engine) Start() {
 	e.startedAt.Store(time.Now().UnixNano())
-	e.running.Store(true)
 	go e.run()
 }
 
@@ -354,11 +335,6 @@ func (e *Engine) Snapshot() Snapshot {
 	if endNs > 0 {
 		endedAt = time.Unix(0, endNs).Format("2006-01-02 15:04:05")
 	}
-	startedAt := ""
-	if startNs > 0 {
-		startedAt = time.Unix(0, startNs).Format("2006-01-02 15:04:05")
-	}
-
 	logError := ""
 	if err := e.logger.err(); err != nil {
 		logError = err.Error()
@@ -367,11 +343,8 @@ func (e *Engine) Snapshot() Snapshot {
 
 	return Snapshot{
 		SessionID:      e.sessionID,
-		Running:        e.running.Load(),
 		Stopping:       e.stopping.Load() && !finished,
 		Finished:       finished,
-		HasEngine:      true,
-		StartedAt:      startedAt,
 		EndedAt:        endedAt,
 		DurationSec:    e.cfg.DurationSec,
 		ElapsedSec:     elapsed,
@@ -386,12 +359,9 @@ func (e *Engine) Snapshot() Snapshot {
 		Max:            e.maxActive.Load(),
 		SuccessRate:    successRate,
 		AvgRate:        avgRate,
-		Mode:           string(e.cfg.Mode),
 		ModeLabel:      ModeLabel(e.cfg.Mode),
-		Interface:      e.cfg.Interface,
 		InterfaceLabel: e.ifaceLabel,
 		DomainCount:    len(e.domains),
-		TargetCount:    len(e.targets),
 		FailStop:       e.cfg.FailStop,
 		RatePerSec:     e.cfg.RatePerSec,
 		StopReason:     reason,
@@ -455,7 +425,6 @@ func (e *Engine) finish() {
 	e.wg.Wait()
 
 	e.endedAt.Store(time.Now().UnixNano())
-	e.running.Store(false)
 
 	reason, _ := e.reason.Load().(string)
 	if reason == "" {

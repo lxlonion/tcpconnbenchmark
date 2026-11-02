@@ -186,7 +186,6 @@ func (e *Engine) Export(dir string) (ExportResult, error) {
 	if err != nil {
 		return ExportResult{}, fmt.Errorf("保存目录无效: %w", err)
 	}
-	base = filepath.Clean(base)
 	l := e.logger
 	l.lifecycleMu.Lock()
 	defer l.lifecycleMu.Unlock()

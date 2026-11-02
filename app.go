@@ -19,7 +19,6 @@ import (
 
 const (
 	version            = "1.0.0"
-	defaultGUIDuration = tester.DefaultDurationSec
 	defaultGUIFailStop = 50
 	liveLogCapacity    = 600
 )
@@ -140,7 +139,7 @@ func newAppInDirectory(fdInfo syslimit.Info, dir string) *App {
 			LogDir:             logDir,
 			FDLimit:            fdInfo,
 			DefaultRatePerSec:  tester.DefaultRatePerSec,
-			DefaultDurationSec: defaultGUIDuration,
+			DefaultDurationSec: tester.DefaultDurationSec,
 			DefaultFailStop:    defaultGUIFailStop,
 			MinRatePerSec:      tester.MinRatePerSec,
 			MaxRatePerSec:      tester.MaxRatePerSec,
@@ -236,10 +235,10 @@ func (a *App) Start(req startRequest) <-chan result[tester.Snapshot] {
 		a.mu.Unlock()
 		if old != nil {
 			if err := old.Discard(); err != nil {
-				// The candidate has a private journal too. It must be started
-				// and stopped before its journal can be discarded.
-				e.Start()
+				// Cancel before starting the candidate to seal its journal
+				// without allowing a connection attempt.
 				e.Stop("启动取消")
+				e.Start()
 				e.Wait()
 				cleanupErr := e.Discard()
 				a.mu.Lock()
@@ -256,7 +255,14 @@ func (a *App) Start(req startRequest) <-chan result[tester.Snapshot] {
 				return
 			}
 		}
+		// Serialize startup with Shutdown's closing flag. If shutdown already
+		// began while constructing the engine, cancel before starting it.
+		a.mu.Lock()
+		if a.closing {
+			e.Stop("程序关闭")
+		}
 		e.Start()
+		a.mu.Unlock()
 		snap := e.Snapshot()
 		a.mu.Lock()
 		a.engine, a.sessionID = e, snap.SessionID

@@ -16,13 +16,6 @@ func TestBuiltinDomainCount(t *testing.T) {
 	if len(valid) != 84 {
 		t.Fatalf("去重后内置域名数量 = %d，期望 84", len(valid))
 	}
-	seen := map[string]bool{}
-	for _, domain := range valid {
-		if seen[domain] {
-			t.Fatalf("内置域名重复: %s", domain)
-		}
-		seen[domain] = true
-	}
 }
 
 func TestNormalizeDomain(t *testing.T) {

@@ -114,7 +114,7 @@ func TestNativeViewFinishedWhileStoppingCanRestart(t *testing.T) {
 	s := &viewStub{}
 	v := newNativeView(s)
 	v.session = "old"
-	v.snapshot = tester.Snapshot{SessionID: "old", HasEngine: true, Finished: true, Stopping: true}
+	v.snapshot = tester.Snapshot{SessionID: "old", Finished: true, Stopping: true}
 	v.drained = true
 	tt := ui.NewTester(v.view, 900, 650)
 	if !tt.HasText("已结束") || tt.HasText("正在停止") {
@@ -126,7 +126,7 @@ func TestNativeViewFinishedWhileStoppingCanRestart(t *testing.T) {
 	if len(s.requests) != 1 {
 		t.Fatal("finished session cannot restart")
 	}
-	s.start <- result[tester.Snapshot]{Value: tester.Snapshot{SessionID: "new", HasEngine: true, Running: true}}
+	s.start <- result[tester.Snapshot]{Value: tester.Snapshot{SessionID: "new"}}
 	tt.Advance(200 * time.Millisecond)
 	if v.session != "new" {
 		t.Fatalf("new session did not start: %q", v.session)
@@ -349,14 +349,13 @@ func TestNativeViewManualExportAndStaleSample(t *testing.T) {
 	}
 	v.session = "s"
 	v.generation = 1
-	v.snapshot = tester.Snapshot{SessionID: "s", HasEngine: true, Running: true}
+	v.snapshot = tester.Snapshot{SessionID: "s"}
 	tt.Frame()
 	_ = tt.Click("保存结果")
 	if len(s.exports) != 0 {
 		t.Fatal("running exported")
 	}
 	v.snapshot.Finished = true
-	v.snapshot.Running = false
 	tt.Frame()
 	if !tt.HasText("结果尚未保存，开始新测试或关闭后丢失") {
 		t.Fatal("missing unsaved warning")
@@ -387,7 +386,7 @@ func TestNativeViewManualExportAndStaleSample(t *testing.T) {
 	if len(s.samples) == 0 {
 		t.Fatal("expected in-flight sample")
 	}
-	s.samples[0] <- result[sampleData]{Value: sampleData{State: tester.Snapshot{SessionID: "s", HasEngine: true, Finished: true}}}
+	s.samples[0] <- result[sampleData]{Value: sampleData{State: tester.Snapshot{SessionID: "s", Finished: true}}}
 	tt.Advance(200 * time.Millisecond)
 	if v.snapshot.LogPath != "/portable/logs/a.csv" || v.snapshot.SummaryPath == "" {
 		t.Fatal("stale sample erased export paths")
@@ -398,7 +397,7 @@ func TestNativeViewManualExportAndStaleSample(t *testing.T) {
 	if err := tt.Click("开始测试"); err != nil {
 		t.Fatal(err)
 	}
-	s.start <- result[tester.Snapshot]{Value: tester.Snapshot{SessionID: "next", HasEngine: true, Running: true}}
+	s.start <- result[tester.Snapshot]{Value: tester.Snapshot{SessionID: "next"}}
 	tt.Advance(200 * time.Millisecond)
 	if v.session != "next" || v.snapshot.LogPath != "" || v.exported.LogPath != "" || len(s.exports) != 2 {
 		t.Fatal("new session kept old paths or exported automatically")
@@ -442,7 +441,7 @@ func TestNativeViewStatsExclusiveAndLayout(t *testing.T) {
 	starting := check(running, finished)
 	v.startPending = nil
 	v.session = "s"
-	v.snapshot = tester.Snapshot{SessionID: "s", HasEngine: true, Running: true}
+	v.snapshot = tester.Snapshot{SessionID: "s"}
 	tt.Frame()
 	active := check(running, finished)
 	v.snapshot.Stopping = true
@@ -577,17 +576,17 @@ func TestNativeViewTimedPollingAndIdle(t *testing.T) {
 	if s.start == nil {
 		t.Fatal("click did not start")
 	}
-	s.start <- result[tester.Snapshot]{Value: tester.Snapshot{SessionID: "new", HasEngine: true, Running: true}}
+	s.start <- result[tester.Snapshot]{Value: tester.Snapshot{SessionID: "new"}}
 	tt.Advance(200 * time.Millisecond)
 	if v.session != "new" || len(s.samples) != 1 {
 		t.Fatal("start was not consumed on timed frame")
 	}
-	s.samples[0] <- result[sampleData]{Value: sampleData{State: tester.Snapshot{SessionID: "new", HasEngine: true, Finished: true}, Logs: []tester.LogEntry{{Seq: 1}}, NextSeq: 1}}
+	s.samples[0] <- result[sampleData]{Value: sampleData{State: tester.Snapshot{SessionID: "new", Finished: true}, Logs: []tester.LogEntry{{Seq: 1}}, NextSeq: 1}}
 	tt.Advance(200 * time.Millisecond)
 	if v.drained || len(s.samples) != 2 {
 		t.Fatalf("finished sample did not continue polling: drained=%v samples=%d since=%d now=%s next=%s", v.drained, len(s.samples), v.since, tt.Now(), v.nextSampleAt)
 	}
-	s.samples[1] <- result[sampleData]{Value: sampleData{State: tester.Snapshot{SessionID: "new", HasEngine: true, Finished: true}, NextSeq: 1}}
+	s.samples[1] <- result[sampleData]{Value: sampleData{State: tester.Snapshot{SessionID: "new", Finished: true}, NextSeq: 1}}
 	tt.Advance(200 * time.Millisecond)
 	if !v.drained {
 		t.Fatal("finished tail did not drain")

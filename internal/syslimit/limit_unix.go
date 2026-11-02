@@ -7,17 +7,6 @@ import (
 	"syscall"
 )
 
-// Info describes the process file descriptor limit before and after the
-// startup adjustment.
-type Info struct {
-	Target    uint64 `json:"target"`
-	Soft      uint64 `json:"soft"`
-	Hard      uint64 `json:"hard"`
-	Raised    bool   `json:"raised"`
-	Supported bool   `json:"supported"`
-	Error     string `json:"error,omitempty"`
-}
-
 // Raise tries to lift the soft file descriptor limit to target without ever
 // exceeding the system hard limit. A soft limit that is already higher is left
 // untouched.

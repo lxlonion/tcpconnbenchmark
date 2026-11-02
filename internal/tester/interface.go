@@ -13,12 +13,12 @@ import (
 // InterfaceInfo is the data the interface picker needs for one network
 // interface.
 type InterfaceInfo struct {
-	Name   string   `json:"name"`
-	Index  int      `json:"index"`
-	IPv4   []string `json:"ipv4"`
-	Label  string   `json:"label"`
-	IsUp   bool     `json:"isUp"`
-	IsLoop bool     `json:"isLoopback"`
+	Name   string
+	Index  int
+	IPv4   []string
+	Label  string
+	IsUp   bool
+	IsLoop bool
 }
 
 // ListInterfaces returns usable network interfaces, with interfaces that have
