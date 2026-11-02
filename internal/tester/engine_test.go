@@ -33,7 +33,11 @@ func TestNormalizeDomain(t *testing.T) {
 		{"bad..example.com", "", true},
 		{"-bad.example.com", "", true},
 		{"exa mple.com", "", true},
-		{"2001:db8::1", "", true},
+		{"2001:db8::1", "2001:db8::1", false},
+		{"[2001:db8::1]", "2001:db8::1", false},
+		{"[2001:db8::1]:443", "2001:db8::1", false},
+		{"http://[fe80::1%25en0]:443/a", "fe80::1%en0", false},
+		{"fe80::1%en0", "fe80::1%en0", false},
 	}
 	for _, tt := range tests {
 		got, err := NormalizeDomain(tt.in)

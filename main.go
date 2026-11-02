@@ -23,6 +23,7 @@ func main() {
 	failStop := flag.Int("fail-stop", 50, "累计失败多少次后停止，0 表示不限制")
 	rate := flag.Int("rate", tester.DefaultRatePerSec, "每秒发起连接次数")
 	iface := flag.String("iface", "", "出口网卡名称，例如 en0；留空使用系统默认路由")
+	sourceIP := flag.String("source-ip", "", "源 IPv4 / IPv6 地址，需同时指定 -iface；留空自动匹配")
 	domainsFlag := flag.String("domains", "", "测试域名，逗号或换行分隔；未指定时读取应用目录配置")
 	save := flag.Bool("save", false, "测试结束后导出 CSV 和摘要到应用目录的 logs")
 	listInterfaces := flag.Bool("list-interfaces", false, "列出可用网卡后退出")
@@ -30,11 +31,14 @@ func main() {
 
 	if *listInterfaces {
 		for _, info := range tester.ListInterfaces() {
-			addr := "-"
+			addr, addr6 := "-", "-"
 			if len(info.IPv4) > 0 {
 				addr = strings.Join(info.IPv4, ", ")
 			}
-			fmt.Printf("%-12s index=%-3d ipv4=%s\n", info.Name, info.Index, addr)
+			if len(info.IPv6) > 0 {
+				addr6 = strings.Join(info.IPv6, ", ")
+			}
+			fmt.Printf("%-12s index=%-3d ipv4=%s ipv6=%s\n", info.Name, info.Index, addr, addr6)
 		}
 		return
 	}
@@ -66,6 +70,7 @@ func main() {
 		if err := runCLI(tester.Config{
 			Mode:        mode,
 			Interface:   *iface,
+			SourceIP:    *sourceIP,
 			Domains:     domains,
 			DurationSec: *duration,
 			FailStop:    *failStop,

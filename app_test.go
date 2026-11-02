@@ -62,8 +62,8 @@ func validRequest() startRequest {
 
 func TestBootstrapDefaultsAndDeepCopy(t *testing.T) {
 	a := testApp(t)
-	// Make nested IPv4 ownership deterministic even on hosts with no interfaces.
-	a.bootstrap.Interfaces = []tester.InterfaceInfo{{Name: "test", IPv4: []string{"192.0.2.1"}}}
+	// Make nested address ownership deterministic even on hosts with no interfaces.
+	a.bootstrap.Interfaces = []tester.InterfaceInfo{{Name: "test", IPv4: []string{"192.0.2.1"}, IPv6: []string{"2001:db8::1"}}}
 	b := a.Bootstrap()
 	if b.DefaultDurationSec != tester.DefaultDurationSec || b.DefaultFailStop != defaultGUIFailStop || b.DefaultRatePerSec != tester.DefaultRatePerSec {
 		t.Fatalf("unexpected defaults: %+v", b)
@@ -77,8 +77,9 @@ func TestBootstrapDefaultsAndDeepCopy(t *testing.T) {
 	b.BuiltinDomains[0] = "changed"
 	b.Interfaces[0].Name = "changed"
 	b.Interfaces[0].IPv4[0] = "changed"
+	b.Interfaces[0].IPv6[0] = "changed"
 	again := a.Bootstrap()
-	if again.Domains[0] != wantDomain || again.BuiltinDomains[0] != wantBuiltin || again.Interfaces[0].Name != "test" || again.Interfaces[0].IPv4[0] != "192.0.2.1" {
+	if again.Domains[0] != wantDomain || again.BuiltinDomains[0] != wantBuiltin || again.Interfaces[0].Name != "test" || again.Interfaces[0].IPv4[0] != "192.0.2.1" || again.Interfaces[0].IPv6[0] != "2001:db8::1" {
 		t.Fatalf("Bootstrap exposes internal slices: %+v", again)
 	}
 }
@@ -96,6 +97,23 @@ func TestStartRejectsInvalidConfig(t *testing.T) {
 		if r := getResult(t, a.Start(req)); r.Err == nil {
 			t.Fatalf("accepted invalid request: %+v", req)
 		}
+	}
+}
+
+func TestStartPassesSelectedSourceAddress(t *testing.T) {
+	a := testApp(t)
+	var received tester.Config
+	a.newEngine = func(cfg tester.Config) (engine, error) {
+		received = cfg
+		return newFakeEngine("ipv6"), nil
+	}
+	req := validRequest()
+	req.Interface, req.SourceIP = "en0", "2001:db8::10"
+	if r := getResult(t, a.Start(req)); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	if received.Interface != req.Interface || received.SourceIP != req.SourceIP {
+		t.Fatalf("selected source not passed to engine: %+v", received)
 	}
 }
 

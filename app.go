@@ -43,6 +43,7 @@ type bootstrapData struct {
 type startRequest struct {
 	Mode        tester.Mode
 	Interface   string
+	SourceIP    string
 	Domains     []string
 	DurationSec int
 	FailStop    int
@@ -178,6 +179,7 @@ func cloneInterfaces(src []tester.InterfaceInfo) []tester.InterfaceInfo {
 	dst := append([]tester.InterfaceInfo(nil), src...)
 	for i := range dst {
 		dst[i].IPv4 = append([]string(nil), dst[i].IPv4...)
+		dst[i].IPv6 = append([]string(nil), dst[i].IPv6...)
 	}
 	return dst
 }
@@ -220,7 +222,7 @@ func (a *App) Start(req startRequest) <-chan result[tester.Snapshot] {
 		defer a.jobs.Done()
 		defer close(ch)
 		e, err := a.newEngine(tester.Config{
-			Mode: req.Mode, Interface: req.Interface, Domains: req.Domains,
+			Mode: req.Mode, Interface: req.Interface, SourceIP: req.SourceIP, Domains: req.Domains,
 			DurationSec: req.DurationSec, FailStop: req.FailStop, RatePerSec: req.RatePerSec,
 		})
 		if err != nil {

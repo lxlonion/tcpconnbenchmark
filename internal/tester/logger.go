@@ -290,7 +290,7 @@ func (l *resultLogger) exportCSV(src io.Reader, dst io.Writer, expected uint64) 
 		return err
 	}
 	w := csv.NewWriter(dst)
-	if err := w.Write([]string{"时间", "域名", "IPv4", "端口", "结果", "耗时(ms)", "错误"}); err != nil {
+	if err := w.Write([]string{"时间", "域名", "IP", "端口", "结果", "耗时(ms)", "错误"}); err != nil {
 		return err
 	}
 	dec := gob.NewDecoder(bufio.NewReaderSize(src, 64*1024))

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -74,6 +75,7 @@ func modePorts(m Mode) []int {
 type Config struct {
 	Mode        Mode
 	Interface   string
+	SourceIP    string
 	Domains     []string
 	DurationSec int
 	FailStop    int
@@ -141,6 +143,8 @@ type Engine struct {
 	targets    []target
 	ifaceLabel string
 	dialer     *net.Dialer
+	sources    interfaceSources
+	iface      *net.Interface
 
 	logger    *resultLogger
 	sessionID string
@@ -219,17 +223,26 @@ func New(cfg Config) (*Engine, error) {
 	}
 	cfg.Domains = domains
 
-	iface, localIP, ifaceLabel, err := selectInterface(cfg.Interface)
+	iface, sources, ifaceLabel, err := selectInterface(cfg.Interface, cfg.SourceIP)
 	if err != nil {
 		return nil, err
+	}
+	var bindIP net.IP
+	if sources.v4 != nil {
+		bindIP = sources.v4.IP
+	} else if sources.v6 != nil {
+		bindIP = sources.v6.IP
+	} else if sources.link6 != nil {
+		bindIP = sources.link6.IP
+	}
+	// An explicit source must not silently bypass a failed interface binding.
+	if strings.TrimSpace(cfg.SourceIP) != "" {
+		bindIP = nil
 	}
 	dialer := &net.Dialer{
 		Timeout:   DialTimeout,
 		KeepAlive: 30 * time.Second,
-		Control:   interfaceControl(iface, localIP),
-	}
-	if localIP != nil {
-		dialer.LocalAddr = &net.TCPAddr{IP: localIP}
+		Control:   interfaceControl(iface, bindIP),
 	}
 
 	fdInfo := syslimit.Raise(FDSoftLimitTarget)
@@ -243,12 +256,17 @@ func New(cfg Config) (*Engine, error) {
 		domains:    domains,
 		ifaceLabel: ifaceLabel,
 		dialer:     dialer,
+		sources:    sources,
+		iface:      iface,
 		logger:     logger,
 		sessionID:  logger.sessionID,
 		ring:       newLogRing(4096),
 		done:       make(chan struct{}),
 		conns:      make(map[uint64]net.Conn),
 		resolver:   newDNSResolver(),
+	}
+	if iface != nil {
+		e.resolver.sourceCheck = e.checkSource
 	}
 	for _, domain := range domains {
 		for _, port := range ports {
@@ -490,12 +508,56 @@ func (e *Engine) connect(t target) (net.Conn, string, error) {
 
 	dialCtx, cancelDial := context.WithTimeout(e.ctx, DialTimeout)
 	defer cancelDial()
-	address := net.JoinHostPort(ip.String(), strconv.Itoa(t.port))
-	conn, err := e.dialer.DialContext(dialCtx, "tcp4", address)
+	host, err := e.targetHost(t.domain, ip)
 	if err != nil {
-		return nil, ip.String(), err
+		return nil, host, err
 	}
-	return conn, ip.String(), nil
+	network, local, err := e.dialSource(ip)
+	if err != nil {
+		return nil, host, err
+	}
+	dialer := *e.dialer
+	if local != nil {
+		dialer.LocalAddr = local
+	}
+	address := net.JoinHostPort(host, strconv.Itoa(t.port))
+	conn, err := dialer.DialContext(dialCtx, network, address)
+	if err != nil {
+		return nil, host, err
+	}
+	return conn, host, nil
+}
+
+func (e *Engine) targetHost(domain string, ip net.IP) (string, error) {
+	host := ip.String()
+	if literal, err := netip.ParseAddr(domain); err == nil && literal.Zone() != "" {
+		if e.iface != nil && literal.Zone() != e.iface.Name && literal.Zone() != strconv.Itoa(e.iface.Index) {
+			return literal.String(), fmt.Errorf("目标 IP 的 zone 不属于所选网卡")
+		}
+		return literal.String(), nil
+	}
+	if ip.To4() == nil && ip.IsLinkLocalUnicast() && e.iface != nil {
+		host += "%" + e.iface.Name
+	}
+	return host, nil
+}
+
+func (e *Engine) checkSource(ip net.IP) error {
+	_, err := e.sources.forIP(ip)
+	return err
+}
+
+// dialSource uses the same family/scope rules as the resolver before dialing.
+func (e *Engine) dialSource(ip net.IP) (string, *net.TCPAddr, error) {
+	network := "tcp6"
+	if ip.To4() != nil {
+		network = "tcp4"
+	}
+	if e.iface == nil {
+		return network, nil, nil
+	}
+	local, err := e.sources.forIP(ip)
+	return network, local, err
 }
 
 func (e *Engine) recordResult(t target, ip string, started time.Time, ok bool, err error) {
@@ -667,10 +729,31 @@ func (r *logRing) since(seq uint64, limit int) ([]LogEntry, bool) {
 // ---- DNS cache ----
 
 type dnsResolver struct {
-	mu       sync.Mutex
-	cache    map[string]*dnsCacheEntry
-	inflight map[string]*dnsCall
-	lookupIP func(context.Context, string) ([]net.IP, error)
+	mu          sync.Mutex
+	cache       map[string]*dnsCacheEntry
+	inflight    map[string]*dnsCall
+	lookupIP    func(context.Context, string) ([]net.IP, error)
+	families    int
+	sourceCheck func(net.IP) error
+}
+
+const (
+	family4 = 1 << iota
+	family6
+)
+
+func (r *dnsResolver) checkIP(ip net.IP) error {
+	if ip.To4() != nil {
+		if r.families&family4 == 0 {
+			return fmt.Errorf("目标 IP 地址族与所选源地址不匹配")
+		}
+	} else if ip.To16() == nil || r.families&family6 == 0 {
+		return fmt.Errorf("目标 IP 地址族与所选源地址不匹配")
+	}
+	if r.sourceCheck != nil {
+		return r.sourceCheck(ip)
+	}
+	return nil
 }
 
 type dnsCacheEntry struct {
@@ -690,18 +773,20 @@ func newDNSResolver() *dnsResolver {
 	return &dnsResolver{
 		cache:    make(map[string]*dnsCacheEntry),
 		inflight: make(map[string]*dnsCall),
+		families: family4 | family6,
 		lookupIP: func(ctx context.Context, host string) ([]net.IP, error) {
-			return net.DefaultResolver.LookupIP(ctx, "ip4", host)
+			return net.DefaultResolver.LookupIP(ctx, "ip", host)
 		},
 	}
 }
 
 func (r *dnsResolver) lookup(ctx context.Context, host string) (net.IP, error) {
-	if ip := net.ParseIP(host); ip != nil {
-		if ip4 := ip.To4(); ip4 != nil {
-			return ip4, nil
+	if literal, err := netip.ParseAddr(host); err == nil {
+		ip := net.IP(literal.Unmap().WithZone("").AsSlice())
+		if err := r.checkIP(ip); err != nil {
+			return nil, err
 		}
-		return nil, fmt.Errorf("仅支持 IPv4")
+		return ip, nil
 	}
 
 	now := time.Now()
@@ -753,18 +838,18 @@ func (r *dnsResolver) lookup(ctx context.Context, host string) (net.IP, error) {
 			cacheEntry = &dnsCacheEntry{err: call.err, expires: now.Add(dnsErrorTTL)}
 		}
 	default:
-		var v4 []net.IP
+		var usable []net.IP
 		for _, ip := range ips {
-			if ip4 := ip.To4(); ip4 != nil {
-				v4 = append(v4, ip4)
+			if r.checkIP(ip) == nil {
+				usable = append(usable, ip)
 			}
 		}
-		if len(v4) == 0 {
-			call.err = fmt.Errorf("DNS 未返回 IPv4 地址")
+		if len(usable) == 0 {
+			call.err = fmt.Errorf("DNS 未返回与所选源 IP 地址族或作用域匹配的 IP 地址")
 			cacheEntry = &dnsCacheEntry{err: call.err, expires: now.Add(dnsErrorTTL)}
 		} else {
-			call.ip = v4[0]
-			cacheEntry = &dnsCacheEntry{ips: v4, expires: now.Add(dnsCacheTTL), next: 1}
+			call.ip = usable[0]
+			cacheEntry = &dnsCacheEntry{ips: usable, expires: now.Add(dnsCacheTTL), next: 1}
 		}
 	}
 

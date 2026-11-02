@@ -3,6 +3,7 @@ package tester
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"strings"
 	"unicode"
@@ -100,7 +101,7 @@ var BuiltinDomains = []string{
 	"58.com",
 }
 
-// NormalizeDomain accepts a domain, an IPv4 literal, or a full URL and returns
+// NormalizeDomain accepts a domain, an IP literal, or a full URL and returns
 // a clean lowercase ASCII host name. Internationalized domain names are
 // converted to their ASCII (punycode) form.
 func NormalizeDomain(raw string) (string, error) {
@@ -122,9 +123,10 @@ func NormalizeDomain(raw string) (string, error) {
 		}
 		if host, _, err := net.SplitHostPort(s); err == nil {
 			s = host
+		} else if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
+			s = s[1 : len(s)-1]
 		} else if strings.Count(s, ":") == 1 {
-			// Treat example.com:443 as host plus port. Bare IPv6 is not
-			// supported because this tester resolves IPv4 only.
+			// Treat example.com:443 as host plus port.
 			host, port, ok := strings.Cut(s, ":")
 			if ok && port != "" && allDigits(port) {
 				s = host
@@ -133,17 +135,12 @@ func NormalizeDomain(raw string) (string, error) {
 	}
 
 	s = strings.TrimSuffix(strings.TrimSpace(s), ".")
-	s = strings.ToLower(s)
 	if s == "" {
 		return "", fmt.Errorf("域名为空")
 	}
 
-	if ip := net.ParseIP(s); ip != nil {
-		ip4 := ip.To4()
-		if ip4 == nil {
-			return "", fmt.Errorf("仅支持 IPv4")
-		}
-		return ip4.String(), nil
+	if ip, err := netip.ParseAddr(s); err == nil {
+		return ip.Unmap().String(), nil
 	}
 
 	ascii, err := idna.Lookup.ToASCII(s)

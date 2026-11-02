@@ -23,6 +23,9 @@ type nativeView struct {
 	editing                  bool
 	mode                     int
 	iface                    string
+	sourceIP                 string
+	interfacePickerOpen      bool
+	interfaceExpanded        map[string]*bool
 	interfaces               []tester.InterfaceInfo
 	rate, duration, failStop string
 	message                  string
@@ -111,7 +114,8 @@ func (v *nativeView) start() {
 		return
 	}
 	modes := []tester.Mode{tester.ModeBoth, tester.Mode80, tester.Mode443}
-	v.startPending = v.controller.Start(startRequest{Mode: modes[v.mode], Interface: v.iface, Domains: append([]string(nil), v.domains...), DurationSec: d, FailStop: f, RatePerSec: r})
+	v.interfacePickerOpen = false
+	v.startPending = v.controller.Start(startRequest{Mode: modes[v.mode], Interface: v.iface, SourceIP: v.sourceIP, Domains: append([]string(nil), v.domains...), DurationSec: d, FailStop: f, RatePerSec: r})
 	v.message = "正在启动…"
 }
 
@@ -239,15 +243,9 @@ func (v *nativeView) poll(now time.Time) {
 				v.message = "刷新网卡失败：" + r.Err.Error()
 			} else {
 				v.interfaces = r.Value
-				found := v.iface == ""
-				for _, i := range v.interfaces {
-					if i.IsUp && !i.IsLoop && i.Name == v.iface {
-						found = true
-					}
-				}
-				if !found {
-					v.iface = ""
-					v.message = "所选网卡已不可用，已切换为自动"
+				if !v.interfaceSelectionAvailable() {
+					v.iface, v.sourceIP = "", ""
+					v.message = "所选网卡或地址已不可用，已切换为自动"
 				} else {
 					v.message = "网卡列表已刷新"
 				}
@@ -405,30 +403,7 @@ func (v *nativeView) form(c *ui.Context) {
 			})
 			ui.Column(c).Grow(1).Gap(5).Children(func() {
 				ui.Text(c, "出口网卡").FontSize(11).TextColor(c.Theme().TextMuted)
-				labels := []string{"自动（系统默认路由）"}
-				names := []string{""}
-				chosen := labels[0]
-				for _, i := range v.interfaces {
-					if i.IsUp && !i.IsLoop {
-						label := i.Label
-						if label == "" {
-							label = i.Name
-						}
-						labels = append(labels, label)
-						names = append(names, i.Name)
-						if v.iface == i.Name {
-							chosen = label
-						}
-					}
-				}
-				if ui.Select(c.Key("interface"), &chosen, labels).Height(32).Label("出口网卡").Disabled(locked).Changed() {
-					for j, label := range labels {
-						if label == chosen {
-							v.iface = names[j]
-							break
-						}
-					}
-				}
+				v.interfacePicker(c, locked)
 			})
 			if ui.Button(c.Key("refresh"), "刷新网卡").Height(32).Disabled(locked || v.interfacesPending != nil).Clicked() {
 				v.interfacesPending = v.controller.Interfaces()

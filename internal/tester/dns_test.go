@@ -159,3 +159,46 @@ func TestDNSLookupIPLiteralSkipsResolver(t *testing.T) {
 		t.Fatalf("ip = %v", ip)
 	}
 }
+
+func TestDNSDualStackFamilyFiltering(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		families int
+		want     []string
+	}{
+		{"dual", family4 | family6, []string{"192.0.2.1", "2001:db8::1", "192.0.2.1"}},
+		{"v4", family4, []string{"192.0.2.1", "192.0.2.1", "192.0.2.1"}},
+		{"v6", family6, []string{"2001:db8::1", "2001:db8::1", "2001:db8::1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newDNSResolver()
+			r.families = tc.families
+			calls := 0
+			r.lookupIP = func(context.Context, string) ([]net.IP, error) {
+				calls++
+				return []net.IP{net.ParseIP("192.0.2.1"), net.ParseIP("2001:db8::1")}, nil
+			}
+			for _, want := range tc.want {
+				ip, err := r.lookup(context.Background(), "dual.example")
+				if err != nil || ip.String() != want {
+					t.Fatalf("got %v, %v; want %s", ip, err, want)
+				}
+			}
+			if calls != 1 {
+				t.Fatalf("lookup calls = %d", calls)
+			}
+		})
+	}
+	r := newDNSResolver()
+	r.families = family6
+	r.lookupIP = func(context.Context, string) ([]net.IP, error) { return []net.IP{net.ParseIP("192.0.2.1")}, nil }
+	if _, err := r.lookup(context.Background(), "v4-only.example"); err == nil {
+		t.Fatal("expected family mismatch")
+	}
+	if _, err := r.lookup(context.Background(), "192.0.2.1"); err == nil {
+		t.Fatal("expected literal family mismatch")
+	}
+	if ip, err := r.lookup(context.Background(), "fe80::1%en0"); err != nil || ip.String() != "fe80::1" {
+		t.Fatalf("scoped literal: %v, %v", ip, err)
+	}
+}

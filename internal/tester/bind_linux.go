@@ -8,8 +8,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func bindToInterface(fd uintptr, iface *net.Interface) error {
+func bindToInterface(fd uintptr, iface *net.Interface, network string) error {
 	// SO_BINDTODEVICE may require CAP_NET_RAW on recent kernels. The caller
-	// tolerates EPERM when a source IPv4 address is configured as well.
+	// tolerates EPERM when a source address is configured as well.
 	return unix.SetsockoptString(int(fd), unix.SOL_SOCKET, unix.SO_BINDTODEVICE, iface.Name)
 }
