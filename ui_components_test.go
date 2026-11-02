@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	"tcpconnbenchmark/internal/i18n"
 	"tcpconnbenchmark/internal/syslimit"
 	"tcpconnbenchmark/internal/tester"
 )
@@ -240,6 +241,41 @@ func TestPolishedLifecycleAndMotion(t *testing.T) {
 	tt.Advance(time.Second)
 	if tt.FramePending() {
 		t.Fatal("finished view keeps animating")
+	}
+}
+
+func TestEnglishLifecycleReasons(t *testing.T) {
+	t.Setenv("LC_ALL", "en_US.UTF-8")
+	theme := ui.LightTheme()
+	v := polishView("finished")
+	for _, tc := range []struct {
+		reason, text string
+		color        ui.Color
+	}{
+		{i18n.T("失败次数达到上限"), "Terminated", theme.Danger},
+		{i18n.T("日志暂存失败"), "Terminated", theme.Danger},
+		{"Details: " + i18n.T("日志暂存失败"), "Terminated", theme.Danger},
+		{i18n.T("达到测试时长"), "Completed", theme.Success},
+		{"Timer: " + i18n.T("达到测试时长"), "Completed", theme.Success},
+		{i18n.T("手动停止"), "Stopped", theme.TextMuted},
+		{"", "Ended", theme.TextMuted},
+	} {
+		v.snapshot.StopReason = tc.reason
+		if got := v.lifecycle(theme, false); got.text != tc.text || got.color != tc.color {
+			t.Errorf("reason %q: got %q, want %q", tc.reason, got.text, tc.text)
+		}
+	}
+}
+
+func TestEnglishGUIText(t *testing.T) {
+	t.Setenv("LC_ALL", "en_US.UTF-8")
+	v := polishView("idle")
+	tt := ui.NewTester(v.view, 900, 650)
+	tt.Frame()
+	for _, text := range []string{"Test mode", "Outgoing interface", "Start test", "Live connection log", "Idle"} {
+		if !tt.HasText(text) {
+			t.Errorf("missing English GUI text %q", text)
+		}
 	}
 }
 

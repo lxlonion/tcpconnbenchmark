@@ -1,11 +1,13 @@
 package tester
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
 	"net/url"
 	"strings"
+	"tcpconnbenchmark/internal/i18n"
 	"unicode"
 
 	"golang.org/x/net/idna"
@@ -107,13 +109,13 @@ var BuiltinDomains = []string{
 func NormalizeDomain(raw string) (string, error) {
 	s := strings.TrimSpace(raw)
 	if s == "" {
-		return "", fmt.Errorf("域名为空")
+		return "", errors.New(i18n.T("域名为空"))
 	}
 
 	if strings.Contains(s, "://") {
 		u, err := url.Parse(s)
 		if err != nil || u.Hostname() == "" {
-			return "", fmt.Errorf("无法解析网址")
+			return "", errors.New(i18n.T("无法解析网址"))
 		}
 		s = u.Hostname()
 	} else {
@@ -136,7 +138,7 @@ func NormalizeDomain(raw string) (string, error) {
 
 	s = strings.TrimSuffix(strings.TrimSpace(s), ".")
 	if s == "" {
-		return "", fmt.Errorf("域名为空")
+		return "", errors.New(i18n.T("域名为空"))
 	}
 
 	if ip, err := netip.ParseAddr(s); err == nil {
@@ -145,29 +147,29 @@ func NormalizeDomain(raw string) (string, error) {
 
 	ascii, err := idna.Lookup.ToASCII(s)
 	if err != nil {
-		return "", fmt.Errorf("域名格式无效")
+		return "", errors.New(i18n.T("域名格式无效"))
 	}
 	ascii = strings.ToLower(ascii)
 	if len(ascii) > 253 {
-		return "", fmt.Errorf("域名过长")
+		return "", errors.New(i18n.T("域名过长"))
 	}
 
 	labels := strings.Split(ascii, ".")
 	for _, label := range labels {
 		if len(label) == 0 {
-			return "", fmt.Errorf("域名包含空标签")
+			return "", errors.New(i18n.T("域名包含空标签"))
 		}
 		if len(label) > 63 {
-			return "", fmt.Errorf("域名标签过长")
+			return "", errors.New(i18n.T("域名标签过长"))
 		}
 		if label[0] == '-' || label[len(label)-1] == '-' {
-			return "", fmt.Errorf("域名标签不能以连字符开头或结尾")
+			return "", errors.New(i18n.T("域名标签不能以连字符开头或结尾"))
 		}
 		for _, r := range label {
 			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
 				continue
 			}
-			return "", fmt.Errorf("域名包含无效字符")
+			return "", errors.New(i18n.T("域名包含无效字符"))
 		}
 	}
 	return ascii, nil

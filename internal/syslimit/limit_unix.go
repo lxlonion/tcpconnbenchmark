@@ -5,6 +5,8 @@ package syslimit
 import (
 	"fmt"
 	"syscall"
+
+	"tcpconnbenchmark/internal/i18n"
 )
 
 // Raise tries to lift the soft file descriptor limit to target without ever
@@ -15,7 +17,7 @@ func Raise(target uint64) Info {
 
 	var lim syscall.Rlimit
 	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &lim); err != nil {
-		info.Error = fmt.Sprintf("读取文件句柄上限失败: %v", err)
+		info.Error = fmt.Sprintf(i18n.T("读取文件句柄上限失败: %v"), err)
 		return info
 	}
 	info.Soft = uint64(lim.Cur)
@@ -31,7 +33,7 @@ func Raise(target uint64) Info {
 
 	lim.Cur = desired
 	if err := syscall.Setrlimit(syscall.RLIMIT_NOFILE, &lim); err != nil {
-		info.Error = fmt.Sprintf("提升文件句柄上限失败: %v", err)
+		info.Error = fmt.Sprintf(i18n.T("提升文件句柄上限失败: %v"), err)
 		return info
 	}
 	info.Raised = true

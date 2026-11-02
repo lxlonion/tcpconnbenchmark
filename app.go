@@ -14,6 +14,7 @@ import (
 
 	"tcpconnbenchmark/internal/appdir"
 	"tcpconnbenchmark/internal/buildinfo"
+	"tcpconnbenchmark/internal/i18n"
 	"tcpconnbenchmark/internal/syslimit"
 	"tcpconnbenchmark/internal/tester"
 )
@@ -107,7 +108,7 @@ func newApp(fdInfo syslimit.Info) *App {
 	dir, err := appdir.Directory()
 	a := newAppInDirectory(fdInfo, dir)
 	if err != nil {
-		a.bootstrap.ConfigError = fmt.Sprintf("无法确定应用目录: %v", err)
+		a.bootstrap.ConfigError = fmt.Sprintf(i18n.T("无法确定应用目录: %v"), err)
 	}
 	return a
 }
@@ -153,7 +154,7 @@ func (a *App) run() error {
 	view := newNativeView(a)
 	mygo.App.WhenReady(func() {
 		win := mygo.NewWindow(mygo.WindowOptions{
-			Title: "tcpconnbenchmark · TCP 并发连接测试", Width: 1180, Height: 780,
+			Title: i18n.T("tcpconnbenchmark · TCP 并发连接测试"), Width: 1180, Height: 780,
 			MinWidth: 900, MinHeight: 650, Content: ui.View(view.view),
 		})
 		view.attach(win)
@@ -207,11 +208,11 @@ func (a *App) Start(req startRequest) <-chan result[tester.Snapshot] {
 	a.mu.Lock()
 	if a.closing {
 		a.mu.Unlock()
-		return reply(tester.Snapshot{}, fmt.Errorf("程序正在关闭"))
+		return reply(tester.Snapshot{}, errors.New(i18n.T("程序正在关闭")))
 	}
 	if a.starting || a.saving || a.exporting || (a.engine != nil && !a.engine.Finished()) {
 		a.mu.Unlock()
-		return reply(tester.Snapshot{}, fmt.Errorf("当前已有测试正在运行"))
+		return reply(tester.Snapshot{}, errors.New(i18n.T("当前已有测试正在运行")))
 	}
 	a.starting = true
 	a.jobs.Add(1)
@@ -239,7 +240,7 @@ func (a *App) Start(req startRequest) <-chan result[tester.Snapshot] {
 			if err := old.Discard(); err != nil {
 				// Cancel before starting the candidate to seal its journal
 				// without allowing a connection attempt.
-				e.Stop("启动取消")
+				e.Stop(i18n.T("启动取消"))
 				e.Start()
 				e.Wait()
 				cleanupErr := e.Discard()
@@ -249,9 +250,9 @@ func (a *App) Start(req startRequest) <-chan result[tester.Snapshot] {
 				}
 				a.starting = false
 				a.mu.Unlock()
-				startErr := fmt.Errorf("清理上一轮测试暂存失败，保留原会话: %w", err)
+				startErr := fmt.Errorf(i18n.T("清理上一轮测试暂存失败，保留原会话: %w"), err)
 				if cleanupErr != nil {
-					startErr = errors.Join(startErr, fmt.Errorf("清理候选测试暂存失败，将在关闭时重试: %w", cleanupErr))
+					startErr = errors.Join(startErr, fmt.Errorf(i18n.T("清理候选测试暂存失败，将在关闭时重试: %w"), cleanupErr))
 				}
 				ch <- result[tester.Snapshot]{Err: startErr}
 				return
@@ -261,7 +262,7 @@ func (a *App) Start(req startRequest) <-chan result[tester.Snapshot] {
 		// began while constructing the engine, cancel before starting it.
 		a.mu.Lock()
 		if a.closing {
-			e.Stop("程序关闭")
+			e.Stop(i18n.T("程序关闭"))
 		}
 		e.Start()
 		a.mu.Unlock()
@@ -272,7 +273,7 @@ func (a *App) Start(req startRequest) <-chan result[tester.Snapshot] {
 		a.starting = false
 		a.mu.Unlock()
 		if closing {
-			e.Stop("程序关闭")
+			e.Stop(i18n.T("程序关闭"))
 		}
 		ch <- result[tester.Snapshot]{Value: snap}
 	}()
@@ -284,13 +285,13 @@ func (a *App) sessionJob(sessionID string, export bool) (engine, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closing {
-		return nil, fmt.Errorf("程序正在关闭")
+		return nil, errors.New(i18n.T("程序正在关闭"))
 	}
 	if export && (a.starting || a.saving || a.exporting) {
-		return nil, fmt.Errorf("测试忙碌，无法导出")
+		return nil, errors.New(i18n.T("测试忙碌，无法导出"))
 	}
 	if a.engine == nil || sessionID == "" || sessionID != a.sessionID {
-		return nil, fmt.Errorf("测试会话不存在或已更换")
+		return nil, errors.New(i18n.T("测试会话不存在或已更换"))
 	}
 	if export {
 		a.exporting = true
@@ -309,7 +310,7 @@ func (a *App) Stop(sessionID string) <-chan result[struct{}] {
 		defer a.jobs.Done()
 		defer close(ch)
 		if !e.Finished() {
-			e.Stop("手动停止")
+			e.Stop(i18n.T("手动停止"))
 		}
 		ch <- result[struct{}]{}
 	}()
@@ -367,7 +368,7 @@ func (a *App) registerJob() bool {
 
 func (a *App) Interfaces() <-chan result[[]tester.InterfaceInfo] {
 	if !a.registerJob() {
-		return reply([]tester.InterfaceInfo(nil), fmt.Errorf("程序正在关闭"))
+		return reply([]tester.InterfaceInfo(nil), errors.New(i18n.T("程序正在关闭")))
 	}
 	ch := make(chan result[[]tester.InterfaceInfo], 1)
 	go func() {
@@ -380,7 +381,7 @@ func (a *App) Interfaces() <-chan result[[]tester.InterfaceInfo] {
 
 func (a *App) OpenLogs() <-chan result[struct{}] {
 	if !a.registerJob() {
-		return reply(struct{}{}, fmt.Errorf("程序正在关闭"))
+		return reply(struct{}{}, errors.New(i18n.T("程序正在关闭")))
 	}
 	ch := make(chan result[struct{}], 1)
 	go func() {
@@ -389,14 +390,14 @@ func (a *App) OpenLogs() <-chan result[struct{}] {
 		dir := a.bootstrap.LogDir
 		var err error
 		if dir == "" {
-			err = fmt.Errorf("应用目录不可用")
+			err = errors.New(i18n.T("应用目录不可用"))
 		} else {
 			err = os.MkdirAll(dir, 0o755)
 		}
 		if err == nil {
 			err = openInFileManager(dir)
 			if err != nil {
-				err = fmt.Errorf("打开日志目录失败: %w", err)
+				err = fmt.Errorf(i18n.T("打开日志目录失败: %w"), err)
 			}
 		}
 		ch <- result[struct{}]{Err: err}
@@ -409,7 +410,7 @@ func (a *App) SaveDomains(domains []string) <-chan result[[]string] {
 	a.mu.Lock()
 	if a.closing || a.starting || a.saving || a.exporting || (a.engine != nil && !a.engine.Finished()) {
 		a.mu.Unlock()
-		return reply([]string(nil), fmt.Errorf("程序正在关闭或测试忙碌，无法保存域名"))
+		return reply([]string(nil), errors.New(i18n.T("程序正在关闭或测试忙碌，无法保存域名")))
 	}
 	a.saving = true
 	a.jobs.Add(1)
@@ -446,9 +447,9 @@ func (a *App) Export(sessionID string) <-chan result[tester.ExportResult] {
 		var value tester.ExportResult
 		var err error
 		if dir == "" {
-			err = fmt.Errorf("应用目录不可用，无法导出日志")
+			err = errors.New(i18n.T("应用目录不可用，无法导出日志"))
 		} else if !e.Finished() {
-			err = fmt.Errorf("测试尚未结束，无法导出日志")
+			err = errors.New(i18n.T("测试尚未结束，无法导出日志"))
 		} else {
 			value, err = e.Export(dir)
 		}
@@ -471,7 +472,7 @@ func (a *App) Shutdown() <-chan struct{} {
 	a.mu.Unlock()
 	go func() {
 		if e != nil && !e.Finished() {
-			e.Stop("程序关闭")
+			e.Stop(i18n.T("程序关闭"))
 		}
 		// A pending Start may create a new engine after the capture above.
 		a.jobs.Wait()
@@ -481,16 +482,16 @@ func (a *App) Shutdown() <-chan struct{} {
 		a.mu.Unlock()
 		if e != nil {
 			if !e.Finished() {
-				e.Stop("程序关闭")
+				e.Stop(i18n.T("程序关闭"))
 			}
 			e.Wait()
 			if err := e.Discard(); err != nil {
-				fmt.Fprintf(os.Stderr, "清理当前测试暂存失败: %v\n", err)
+				fmt.Fprintf(os.Stderr, i18n.T("清理当前测试暂存失败: %v\n"), err)
 			}
 		}
 		for _, candidate := range pending {
 			if err := candidate.Discard(); err != nil {
-				fmt.Fprintf(os.Stderr, "清理候选测试暂存失败: %v\n", err)
+				fmt.Fprintf(os.Stderr, i18n.T("清理候选测试暂存失败: %v\n"), err)
 			}
 		}
 		close(a.done)

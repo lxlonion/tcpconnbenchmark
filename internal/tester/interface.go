@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+	"tcpconnbenchmark/internal/i18n"
 )
 
 // InterfaceInfo is the data the interface picker needs for one network
@@ -44,12 +45,12 @@ func ListInterfaces() []InterfaceInfo {
 		if len(ipv4) > 0 {
 			info.Label = iface.Name + " · " + ipv4[0]
 			if len(ipv4) > 1 {
-				info.Label += fmt.Sprintf(" 等 %d 个", len(ipv4))
+				info.Label += fmt.Sprintf(i18n.T(" 等 %d 个"), len(ipv4))
 			}
 		} else if len(ipv6) > 0 {
 			info.Label = iface.Name + " · " + ipv6[0]
 		} else {
-			info.Label = iface.Name + " · 无 IP"
+			info.Label = iface.Name + i18n.T(" · 无 IP")
 		}
 		result = append(result, info)
 	}
@@ -104,16 +105,16 @@ func selectInterface(name, source string) (iface *net.Interface, sources interfa
 	source = strings.TrimSpace(source)
 	if name == "" || strings.EqualFold(name, "auto") {
 		if source != "" {
-			return nil, sources, "", fmt.Errorf("指定源 IP 时必须选择网卡")
+			return nil, sources, "", errors.New(i18n.T("指定源 IP 时必须选择网卡"))
 		}
-		return nil, sources, "自动（系统默认路由）", nil
+		return nil, sources, i18n.T("自动（系统默认路由）"), nil
 	}
 	iface, err = net.InterfaceByName(name)
 	if err != nil {
-		return nil, sources, "", fmt.Errorf("找不到网卡 %q: %w", name, err)
+		return nil, sources, "", fmt.Errorf(i18n.T("找不到网卡 %q: %w"), name, err)
 	}
 	if iface.Flags&net.FlagUp == 0 {
-		return nil, sources, "", fmt.Errorf("网卡 %q 当前未启用", name)
+		return nil, sources, "", fmt.Errorf(i18n.T("网卡 %q 当前未启用"), name)
 	}
 	ips4, ips6 := interfaceIPs(iface)
 	sources, err = chooseInterfaceSources(iface, ips4, ips6, source)
@@ -165,7 +166,7 @@ func chooseInterfaceSources(iface *net.Interface, ips4, ips6 []string, source st
 		}
 	}
 	if sources.v4 == nil && sources.v6 == nil && sources.link6 == nil {
-		return sources, fmt.Errorf("网卡 %q 没有可用 IP 地址", iface.Name)
+		return sources, fmt.Errorf(i18n.T("网卡 %q 没有可用 IP 地址"), iface.Name)
 	}
 	return sources, nil
 }
@@ -180,24 +181,24 @@ func (sources interfaceSources) forIP(ip net.IP) (*net.TCPAddr, error) {
 			if sources.link6 != nil {
 				return sources.link6, nil
 			}
-			return nil, fmt.Errorf("目标 IPv6 为链路本地地址，但所选源 IP 不包含链路本地地址")
+			return nil, errors.New(i18n.T("目标 IPv6 为链路本地地址，但所选源 IP 不包含链路本地地址"))
 		}
 		if sources.v6 != nil {
 			return sources.v6, nil
 		}
-		return nil, fmt.Errorf("目标 IPv6 不是链路本地地址，但所选源 IP 不包含非链路本地 IPv6 地址")
+		return nil, errors.New(i18n.T("目标 IPv6 不是链路本地地址，但所选源 IP 不包含非链路本地 IPv6 地址"))
 	}
-	return nil, fmt.Errorf("目标 IP 地址族与所选源地址不匹配")
+	return nil, errors.New(i18n.T("目标 IP 地址族与所选源地址不匹配"))
 }
 
 func validateSource(iface *net.Interface, ips4, ips6 []string, source string) (*net.TCPAddr, error) {
 	addr, err := netip.ParseAddr(source)
 	if err != nil {
-		return nil, fmt.Errorf("源 IP 无效: %q", source)
+		return nil, fmt.Errorf(i18n.T("源 IP 无效: %q"), source)
 	}
 	addr = addr.Unmap()
 	if zone := addr.Zone(); zone != "" && zone != iface.Name && zone != fmt.Sprint(iface.Index) {
-		return nil, fmt.Errorf("源 IP 的 zone 不属于网卡 %q", iface.Name)
+		return nil, fmt.Errorf(i18n.T("源 IP 的 zone 不属于网卡 %q"), iface.Name)
 	}
 	plain := addr.WithZone("").String()
 	ips := ips6
@@ -213,7 +214,7 @@ func validateSource(iface *net.Interface, ips4, ips6 []string, source string) (*
 			return local, nil
 		}
 	}
-	return nil, fmt.Errorf("源 IP %q 不属于网卡 %q", source, iface.Name)
+	return nil, fmt.Errorf(i18n.T("源 IP %q 不属于网卡 %q"), source, iface.Name)
 }
 
 // interfaceControl returns a net.Dialer Control callback that binds the socket
@@ -235,7 +236,7 @@ func interfaceControl(iface *net.Interface, localIP net.IP) func(network, addres
 			if localIP != nil && (errors.Is(bindErr, os.ErrPermission) || errors.Is(bindErr, syscall.EPERM)) {
 				return nil
 			}
-			return fmt.Errorf("绑定网卡 %s 失败: %w", iface.Name, bindErr)
+			return fmt.Errorf(i18n.T("绑定网卡 %s 失败: %w"), iface.Name, bindErr)
 		}
 		return nil
 	}

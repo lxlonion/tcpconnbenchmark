@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	"tcpconnbenchmark/internal/i18n"
 	"tcpconnbenchmark/internal/tester"
 )
 
@@ -27,9 +28,11 @@ func (v *nativeView) lifecycle(t *ui.Theme, reduceMotion bool) lifecycleStyle {
 	case v.snapshot.Finished:
 		s.text = "已结束"
 		s.color = t.TextMuted
-		if strings.Contains(v.snapshot.StopReason, "失败") {
+		reason := v.snapshot.StopReason
+		lowerReason := strings.ToLower(reason)
+		if strings.Contains(reason, "失败") || strings.Contains(lowerReason, "fail") {
 			s.text, s.color = "已终止", t.Danger
-		} else if strings.Contains(v.snapshot.StopReason, "达到测试时长") {
+		} else if strings.Contains(reason, "达到测试时长") || strings.Contains(reason, i18n.T("达到测试时长")) {
 			s.text, s.color = "已完成", t.Success
 		} else if v.snapshot.StopReason != "" {
 			s.text = "已停止"
@@ -39,6 +42,7 @@ func (v *nativeView) lifecycle(t *ui.Theme, reduceMotion bool) lifecycleStyle {
 	case v.session != "":
 		s.text, s.color, s.pulse = "运行中", t.Success, !reduceMotion
 	}
+	s.text = i18n.T(s.text)
 	return s
 }
 
@@ -73,10 +77,10 @@ func (v *nativeView) kpiCards(c *ui.Context, s tester.Snapshot) {
 	}
 	ui.Grid(c.Key("kpis")).Columns(5).Gap(8).Height(78).Children(func() {
 		for _, m := range metrics {
-			ui.Column(c.Key("kpi-"+m.label)).Label("指标："+m.label).Padding(10, 12).Gap(4).Radius(9).Background(t.Surface.Mix(m.color, .035)).Border(1, t.Border.Alpha(.65)).Children(func() {
-				label := m.label
-				if label == "平均速率" {
-					label += " · 次/秒"
+			ui.Column(c.Key("kpi-"+m.label)).Label(i18n.T("指标：")+i18n.T(m.label)).Padding(10, 12).Gap(4).Radius(9).Background(t.Surface.Mix(m.color, .035)).Border(1, t.Border.Alpha(.65)).Children(func() {
+				label := i18n.T(m.label)
+				if m.label == "平均速率" {
+					label += i18n.T(" · 次/秒")
 				}
 				ui.Text(c, label).FontSize(11).TextColor(t.TextMuted)
 				ui.Text(c, m.value).Font("monospace").FontFeatures("tnum").FontSize(25).Bold().TextColor(m.color).SingleLine().Tooltip(m.value)
@@ -86,23 +90,23 @@ func (v *nativeView) kpiCards(c *ui.Context, s tester.Snapshot) {
 }
 
 func logColumns() []ui.TableColumn {
-	return []ui.TableColumn{{Title: "序号", Width: 64}, {Title: "时间", Width: 124}, {Title: "状态", Width: 68}, {Title: "域名", Width: 140}, {Title: "IP", Width: 132}, {Title: "端口", Width: 56}, {Title: "耗时", Width: 104, Align: ui.End}, {Title: "错误", MinWidth: 100}}
+	return []ui.TableColumn{{Title: i18n.T("序号"), Width: 64}, {Title: i18n.T("时间"), Width: 124}, {Title: i18n.T("状态"), Width: 68}, {Title: i18n.T("域名"), Width: 140}, {Title: "IP", Width: 132}, {Title: i18n.T("端口"), Width: 56}, {Title: i18n.T("耗时"), Width: 104, Align: ui.End}, {Title: i18n.T("错误"), MinWidth: 100}}
 }
 
 func logStatus(t *ui.Theme, e tester.LogEntry) (string, ui.Color) {
 	if e.Aborted {
-		return "中止", t.Warning
+		return i18n.T("中止"), t.Warning
 	}
 	if e.OK {
-		return "成功", t.Success
+		return i18n.T("成功"), t.Success
 	}
-	return "失败", t.Danger
+	return i18n.T("失败"), t.Danger
 }
 
 func logCell(c *ui.Context, e tester.LogEntry, col int) {
 	status, color := logStatus(c.Theme(), e)
 	if col == 2 {
-		ui.Badge(c, status).Label("日志状态："+status).Background(color.Alpha(.12)).TextColor(color).FontSize(11).Padding(3, 7).Radius(5)
+		ui.Badge(c, status).Label(i18n.T("日志状态：")+status).Background(color.Alpha(.12)).TextColor(color).FontSize(11).Padding(3, 7).Radius(5)
 		return
 	}
 	cells := []string{strconv.FormatUint(e.Seq, 10), e.Time, status, e.Domain, e.IP, strconv.Itoa(e.Port), fmt.Sprintf("%.1f ms", e.LatencyMS), e.Error}
@@ -117,15 +121,15 @@ func logCell(c *ui.Context, e tester.LogEntry, col int) {
 
 func (v *nativeView) emptyLogText() string {
 	if len(v.entries) > 0 {
-		return "当前筛选没有匹配记录"
+		return i18n.T("当前筛选没有匹配记录")
 	}
 	if v.logsCleared {
-		return "视图已清空，完整结果仍可在测试结束后保存"
+		return i18n.T("视图已清空，完整结果仍可在测试结束后保存")
 	}
 	if v.session != "" {
-		return "等待连接记录…"
+		return i18n.T("等待连接记录…")
 	}
-	return "暂无测试日志，点击「开始测试」"
+	return i18n.T("暂无测试日志，点击「开始测试」")
 }
 
 func (v *nativeView) storageDetails(c *ui.Context) {
@@ -140,11 +144,12 @@ func (v *nativeView) storageDetails(c *ui.Context) {
 }
 
 func pathField(c *ui.Context, key, label string, value *string) {
+	label = i18n.T(label)
 	ui.Row(c.Key(key + "-row")).Gap(5).Children(func() {
 		short := map[string]string{"app-dir": "应用", "config-path": "配置", "csv-path": "CSV", "summary-path": "摘要", "log-dir": "日志"}[key]
-		ui.Text(c, short).FontSize(11).TextColor(c.Theme().TextMuted)
+		ui.Text(c, i18n.T(short)).FontSize(11).TextColor(c.Theme().TextMuted)
 		ui.TextInput(c.Key(key), value).Height(28).Label(label).ReadOnly(true).Tooltip(label + "：" + *value).Grow(1)
-		if ui.Button(c.Key(key+"-copy"), "复制").Height(28).Label("复制" + label).Disabled(*value == "").Clicked() {
+		if ui.Button(c.Key(key+"-copy"), i18n.T("复制")).Height(28).Label(i18n.T("复制") + label).Disabled(*value == "").Clicked() {
 			c.WriteClipboard(*value)
 		}
 	})
@@ -158,18 +163,18 @@ func limitLabel(n uint64) string {
 }
 
 func (v *nativeView) statusBar(c *ui.Context) {
-	fd, full := "FD —", "当前平台不支持文件句柄上限调整"
+	fd, full := "FD —", i18n.T("当前平台不支持文件句柄上限调整")
 	if v.boot.FDLimit.Supported {
 		fd = "FD " + limitLabel(v.boot.FDLimit.Soft) + " / " + limitLabel(v.boot.FDLimit.Hard)
-		full = fmt.Sprintf("文件句柄软上限 %d；硬上限 %d；目标 %d", v.boot.FDLimit.Soft, v.boot.FDLimit.Hard, v.boot.FDLimit.Target)
+		full = fmt.Sprintf(i18n.T("文件句柄软上限 %d；硬上限 %d；目标 %d"), v.boot.FDLimit.Soft, v.boot.FDLimit.Hard, v.boot.FDLimit.Target)
 	}
 	if v.boot.FDLimit.Error != "" {
-		fd += " · 调整失败"
+		fd += i18n.T(" · 调整失败")
 		full += "；" + v.boot.FDLimit.Error
 	}
 	ui.Row(c.Key("status-bar")).Gap(10).Children(func() {
-		ui.Text(c, fd).Label("文件句柄状态").Tooltip(full).FontSize(11).TextColor(c.Theme().TextMuted)
+		ui.Text(c, fd).Label(i18n.T("文件句柄状态")).Tooltip(full).FontSize(11).TextColor(c.Theme().TextMuted)
 		ui.Spacer(c)
-		ui.Text(c, v.boot.Version).Label("版本").Tooltip(v.boot.Version).FontSize(11).TextColor(c.Theme().TextMuted).SingleLine()
+		ui.Text(c, v.boot.Version).Label(i18n.T("版本")).Tooltip(v.boot.Version).FontSize(11).TextColor(c.Theme().TextMuted).SingleLine()
 	})
 }

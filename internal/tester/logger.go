@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"tcpconnbenchmark/internal/i18n"
 	"time"
 
 	"tcpconnbenchmark/internal/appdir"
@@ -70,13 +71,13 @@ type resultLogger struct {
 func newResultLogger(cfg Config, ifaceLabel string, fdInfo syslimit.Info) (*resultLogger, error) {
 	dir, err := os.MkdirTemp("", "tcpconnbenchmark-journal-")
 	if err != nil {
-		return nil, fmt.Errorf("创建日志暂存目录失败: %w", err)
+		return nil, fmt.Errorf(i18n.T("创建日志暂存目录失败: %w"), err)
 	}
 	path := filepath.Join(dir, "journal.bin")
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		_ = os.RemoveAll(dir)
-		return nil, fmt.Errorf("创建日志暂存文件失败: %w", err)
+		return nil, fmt.Errorf(i18n.T("创建日志暂存文件失败: %w"), err)
 	}
 	now := time.Now()
 	cfg.Domains = append([]string(nil), cfg.Domains...)
@@ -128,7 +129,7 @@ func (l *resultLogger) write(entry LogEntry, at time.Time) error {
 	case l.queue <- journalRecord{Entry: entry, At: at}:
 		return nil
 	default:
-		err := errors.New("日志暂存队列已满，结果不完整")
+		err := errors.New(i18n.T("日志暂存队列已满，结果不完整"))
 		l.fail(err)
 		return err
 	}
@@ -144,24 +145,24 @@ func (l *resultLogger) runWriter() {
 			continue
 		}
 		if err := enc.Encode(record); err != nil {
-			l.fail(fmt.Errorf("写入日志暂存失败: %w", err))
+			l.fail(fmt.Errorf(i18n.T("写入日志暂存失败: %w"), err))
 			continue
 		}
 		count++
 	}
 	if l.err() == nil {
 		if err := enc.Encode(journalRecord{Final: true, Count: count}); err != nil {
-			l.fail(fmt.Errorf("封存日志暂存失败: %w", err))
+			l.fail(fmt.Errorf(i18n.T("封存日志暂存失败: %w"), err))
 		}
 	}
 	if err := buf.Flush(); err != nil {
-		l.fail(fmt.Errorf("刷新日志暂存失败: %w", err))
+		l.fail(fmt.Errorf(i18n.T("刷新日志暂存失败: %w"), err))
 	}
 	if err := l.file.Sync(); err != nil {
-		l.fail(fmt.Errorf("同步日志暂存失败: %w", err))
+		l.fail(fmt.Errorf(i18n.T("同步日志暂存失败: %w"), err))
 	}
 	if err := l.file.Close(); err != nil {
-		l.fail(fmt.Errorf("关闭日志暂存失败: %w", err))
+		l.fail(fmt.Errorf(i18n.T("关闭日志暂存失败: %w"), err))
 	}
 	l.written = count
 }
@@ -170,53 +171,53 @@ func (l *resultLogger) close(expected uint64) {
 	close(l.queue)
 	<-l.writerDone
 	if l.written != expected && l.err() == nil {
-		l.fail(fmt.Errorf("日志暂存数量不符: %d != %d", l.written, expected))
+		l.fail(fmt.Errorf(i18n.T("日志暂存数量不符: %d != %d"), l.written, expected))
 	}
 }
 
 // Export writes a complete CSV and summary after the journal is sealed.
 func (e *Engine) Export(dir string) (ExportResult, error) {
 	if !e.Finished() {
-		return ExportResult{}, errors.New("测试尚未完成，无法保存")
+		return ExportResult{}, errors.New(i18n.T("测试尚未完成，无法保存"))
 	}
 	if strings.TrimSpace(dir) == "" {
-		return ExportResult{}, errors.New("保存目录不能为空")
+		return ExportResult{}, errors.New(i18n.T("保存目录不能为空"))
 	}
 	base, err := filepath.Abs(dir)
 	if err != nil {
-		return ExportResult{}, fmt.Errorf("保存目录无效: %w", err)
+		return ExportResult{}, fmt.Errorf(i18n.T("保存目录无效: %w"), err)
 	}
 	l := e.logger
 	l.lifecycleMu.Lock()
 	defer l.lifecycleMu.Unlock()
 	if l.discarded {
-		return ExportResult{}, errors.New("测试结果暂存已清理")
+		return ExportResult{}, errors.New(i18n.T("测试结果暂存已清理"))
 	}
 	if err := l.err(); err != nil {
-		return ExportResult{}, fmt.Errorf("日志暂存不完整，无法保存: %w", err)
+		return ExportResult{}, fmt.Errorf(i18n.T("日志暂存不完整，无法保存: %w"), err)
 	}
 	if previous := l.paths(); previous.LogPath != "" {
 		if base != l.exportDir {
-			return ExportResult{}, errors.New("本轮结果已保存到其他目录")
+			return ExportResult{}, errors.New(i18n.T("本轮结果已保存到其他目录"))
 		}
 		for _, path := range []string{previous.LogPath, previous.SummaryPath} {
 			if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
-				return ExportResult{}, fmt.Errorf("已保存文件缺失或不可用: %s", path)
+				return ExportResult{}, fmt.Errorf(i18n.T("已保存文件缺失或不可用: %s"), path)
 			}
 		}
 		return previous, nil
 	}
 	if err := os.MkdirAll(base, 0o755); err != nil {
-		return ExportResult{}, fmt.Errorf("创建保存目录失败: %w", err)
+		return ExportResult{}, fmt.Errorf(i18n.T("创建保存目录失败: %w"), err)
 	}
 	outDir, err := os.MkdirTemp(base, l.sessionID+"-")
 	if err != nil {
-		return ExportResult{}, fmt.Errorf("创建导出目录失败: %w", err)
+		return ExportResult{}, fmt.Errorf(i18n.T("创建导出目录失败: %w"), err)
 	}
 	paths := ExportResult{LogPath: filepath.Join(outDir, "results.csv"), SummaryPath: filepath.Join(outDir, "summary.txt")}
 	if err := l.exportFiles(paths, e.Snapshot(), e.logSeq.Load()); err != nil {
 		if cleanupErr := os.RemoveAll(outDir); cleanupErr != nil {
-			err = errors.Join(err, fmt.Errorf("清理未完成导出 %s 失败: %w", outDir, cleanupErr))
+			err = errors.Join(err, fmt.Errorf(i18n.T("清理未完成导出 %s 失败: %w"), outDir, cleanupErr))
 		}
 		return ExportResult{}, err
 	}
@@ -230,7 +231,7 @@ func (e *Engine) Export(dir string) (ExportResult, error) {
 // Discard releases only the private journal; exported user files are untouched.
 func (e *Engine) Discard() error {
 	if !e.Finished() {
-		return errors.New("测试尚未完成，无法清理暂存")
+		return errors.New(i18n.T("测试尚未完成，无法清理暂存"))
 	}
 	l := e.logger
 	l.lifecycleMu.Lock()
@@ -239,7 +240,7 @@ func (e *Engine) Discard() error {
 		return nil
 	}
 	if err := os.RemoveAll(l.tempDir); err != nil {
-		return fmt.Errorf("清理日志暂存 %s 失败: %w", l.tempDir, err)
+		return fmt.Errorf(i18n.T("清理日志暂存 %s 失败: %w"), l.tempDir, err)
 	}
 	l.discarded = true
 	return nil
@@ -248,12 +249,12 @@ func (e *Engine) Discard() error {
 func (l *resultLogger) exportFiles(paths ExportResult, snap Snapshot, expected uint64) error {
 	input, err := os.Open(l.journalPath)
 	if err != nil {
-		return fmt.Errorf("读取日志暂存失败: %w", err)
+		return fmt.Errorf(i18n.T("读取日志暂存失败: %w"), err)
 	}
 	defer input.Close()
 	csvFile, err := l.createExportFile(paths.LogPath)
 	if err != nil {
-		return fmt.Errorf("创建 CSV 失败: %w", err)
+		return fmt.Errorf(i18n.T("创建 CSV 失败: %w"), err)
 	}
 	err = l.exportCSV(input, csvFile, expected)
 	if err == nil {
@@ -261,11 +262,11 @@ func (l *resultLogger) exportFiles(paths ExportResult, snap Snapshot, expected u
 	}
 	err = errors.Join(err, csvFile.Close())
 	if err != nil {
-		return fmt.Errorf("导出 CSV 失败: %w", err)
+		return fmt.Errorf(i18n.T("导出 CSV 失败: %w"), err)
 	}
 	summaryFile, err := l.createExportFile(paths.SummaryPath)
 	if err != nil {
-		return fmt.Errorf("创建摘要失败: %w", err)
+		return fmt.Errorf(i18n.T("创建摘要失败: %w"), err)
 	}
 	_, err = io.WriteString(summaryFile, l.summary(snap, paths))
 	if err == nil {
@@ -273,7 +274,7 @@ func (l *resultLogger) exportFiles(paths ExportResult, snap Snapshot, expected u
 	}
 	err = errors.Join(err, summaryFile.Close())
 	if err != nil {
-		return fmt.Errorf("导出摘要失败: %w", err)
+		return fmt.Errorf(i18n.T("导出摘要失败: %w"), err)
 	}
 	return nil
 }
@@ -298,21 +299,21 @@ func (l *resultLogger) exportCSV(src io.Reader, dst io.Writer, expected uint64) 
 	for {
 		var r journalRecord
 		if err := dec.Decode(&r); err != nil {
-			return fmt.Errorf("日志暂存截断或损坏: %w", err)
+			return fmt.Errorf(i18n.T("日志暂存截断或损坏: %w"), err)
 		}
 		if r.Final {
 			if r.Count != count || count != expected {
-				return fmt.Errorf("日志暂存数量不符: %d/%d/%d", count, r.Count, expected)
+				return fmt.Errorf(i18n.T("日志暂存数量不符: %d/%d/%d"), count, r.Count, expected)
 			}
 			var extra journalRecord
 			if err := dec.Decode(&extra); err != io.EOF {
-				return fmt.Errorf("日志暂存尾部损坏: %v", err)
+				return fmt.Errorf(i18n.T("日志暂存尾部损坏: %v"), err)
 			}
 			break
 		}
 		count++
 		if r.Entry.Seq != count {
-			return fmt.Errorf("日志暂存序号不连续: %d != %d", r.Entry.Seq, count)
+			return fmt.Errorf(i18n.T("日志暂存序号不连续: %d != %d"), r.Entry.Seq, count)
 		}
 		result := "failed"
 		if r.Entry.Aborted {
@@ -330,33 +331,33 @@ func (l *resultLogger) exportCSV(src io.Reader, dst io.Writer, expected uint64) 
 
 func (l *resultLogger) summary(snap Snapshot, paths ExportResult) string {
 	var b strings.Builder
-	b.WriteString("tcpconnbenchmark · TCP 并发连接测试\n========================================\n")
-	fmt.Fprintf(&b, "会话 ID: %s\n状态: %s\n开始时间: %s\n结束时间: %s\n", l.sessionID, snap.StopReason, l.createdAt.Format("2006-01-02 15:04:05"), snap.EndedAt)
-	fmt.Fprintf(&b, "测试模式: %s\n出口网卡: %s\n测试域名: %d 个\n发起目标: %d 个（域名 × 端口）\n测试时长: %d 秒\n", ModeLabel(l.config.Mode), l.ifaceLabel, len(l.config.Domains), len(l.config.Domains)*len(modePorts(l.config.Mode)), l.config.DurationSec)
+	b.WriteString(i18n.T("tcpconnbenchmark · TCP 并发连接测试\n========================================\n"))
+	fmt.Fprintf(&b, i18n.T("会话 ID: %s\n状态: %s\n开始时间: %s\n结束时间: %s\n"), l.sessionID, snap.StopReason, l.createdAt.Format("2006-01-02 15:04:05"), snap.EndedAt)
+	fmt.Fprintf(&b, i18n.T("测试模式: %s\n出口网卡: %s\n测试域名: %d 个\n发起目标: %d 个（域名 × 端口）\n测试时长: %d 秒\n"), ModeLabel(l.config.Mode), l.ifaceLabel, len(l.config.Domains), len(l.config.Domains)*len(modePorts(l.config.Mode)), l.config.DurationSec)
 	if l.config.FailStop > 0 {
-		fmt.Fprintf(&b, "失败停止: %d 次\n", l.config.FailStop)
+		fmt.Fprintf(&b, i18n.T("失败停止: %d 次\n"), l.config.FailStop)
 	} else {
-		b.WriteString("失败停止: 不限制\n")
+		b.WriteString(i18n.T("失败停止: 不限制\n"))
 	}
-	fmt.Fprintf(&b, "发起速率: %d 次/秒\n单连接保持: 至本轮测试结束\n", l.config.RatePerSec)
+	fmt.Fprintf(&b, i18n.T("发起速率: %d 次/秒\n单连接保持: 至本轮测试结束\n"), l.config.RatePerSec)
 	if l.fdInfo.Supported {
-		fmt.Fprintf(&b, "文件句柄软上限: %d（硬上限 %d）\n", l.fdInfo.Soft, l.fdInfo.Hard)
+		fmt.Fprintf(&b, i18n.T("文件句柄软上限: %d（硬上限 %d）\n"), l.fdInfo.Soft, l.fdInfo.Hard)
 	} else if l.fdInfo.Error != "" {
-		fmt.Fprintf(&b, "文件句柄上限: %s\n", l.fdInfo.Error)
+		fmt.Fprintf(&b, i18n.T("文件句柄上限: %s\n"), l.fdInfo.Error)
 	} else {
-		b.WriteString("文件句柄上限: 当前平台不适用\n")
+		b.WriteString(i18n.T("文件句柄上限: 当前平台不适用\n"))
 	}
-	fmt.Fprintf(&b, "CSV 日志: %s\n摘要文件: %s\n----------------------------------------\n", paths.LogPath, paths.SummaryPath)
-	fmt.Fprintf(&b, "尝试次数: %d\n成功: %d\n失败: %d\n中止: %d\n", snap.Attempts, snap.Success, snap.Failed, snap.Aborted)
+	fmt.Fprintf(&b, i18n.T("CSV 日志: %s\n摘要文件: %s\n----------------------------------------\n"), paths.LogPath, paths.SummaryPath)
+	fmt.Fprintf(&b, i18n.T("尝试次数: %d\n成功: %d\n失败: %d\n中止: %d\n"), snap.Attempts, snap.Success, snap.Failed, snap.Aborted)
 	if snap.Success+snap.Failed > 0 {
-		fmt.Fprintf(&b, "成功率: %.2f%%\n", snap.SuccessRate)
+		fmt.Fprintf(&b, i18n.T("成功率: %.2f%%\n"), snap.SuccessRate)
 	} else {
-		b.WriteString("成功率: —\n")
+		b.WriteString(i18n.T("成功率: —\n"))
 	}
-	fmt.Fprintf(&b, "峰值并发: %d\n平均发起速率: %.2f 次/秒\n停止原因: %s\n----------------------------------------\n测试域名（%d）:\n", snap.Max, snap.AvgRate, snap.StopReason, len(l.config.Domains))
+	fmt.Fprintf(&b, i18n.T("峰值并发: %d\n平均发起速率: %.2f 次/秒\n停止原因: %s\n----------------------------------------\n测试域名（%d）:\n"), snap.Max, snap.AvgRate, snap.StopReason, len(l.config.Domains))
 	for i, domain := range l.config.Domains {
 		fmt.Fprintf(&b, "%3d. %s\n", i+1, domain)
 	}
-	b.WriteString("----------------------------------------\n说明: 仅解析 IPv4 / IPv6 地址并建立 TCP 连接；不发送 HTTP 请求、不进行 TLS 握手、不传输网页数据。\n")
+	b.WriteString(i18n.T("----------------------------------------\n说明: 仅解析 IPv4 / IPv6 地址并建立 TCP 连接；不发送 HTTP 请求、不进行 TLS 握手、不传输网页数据。\n"))
 	return b.String()
 }

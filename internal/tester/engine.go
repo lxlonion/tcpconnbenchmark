@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"tcpconnbenchmark/internal/i18n"
 	"time"
 
 	"tcpconnbenchmark/internal/syslimit"
@@ -182,25 +183,25 @@ func New(cfg Config) (*Engine, error) {
 	cfg.Mode = Mode(strings.TrimSpace(string(cfg.Mode)))
 	ports := modePorts(cfg.Mode)
 	if len(ports) == 0 {
-		return nil, fmt.Errorf("测试模式无效，请选择 TCP 80、TCP 443 或 TCP 80 + 443")
+		return nil, errors.New(i18n.T("测试模式无效，请选择 TCP 80、TCP 443 或 TCP 80 + 443"))
 	}
 	if cfg.DurationSec < 1 || cfg.DurationSec > 86400 {
-		return nil, fmt.Errorf("测试时长需在 1 到 86400 秒之间")
+		return nil, errors.New(i18n.T("测试时长需在 1 到 86400 秒之间"))
 	}
 	if cfg.FailStop < 0 {
-		return nil, fmt.Errorf("失败停止次数不能为负数")
+		return nil, errors.New(i18n.T("失败停止次数不能为负数"))
 	}
 	if cfg.FailStop > 10_000_000 {
-		return nil, fmt.Errorf("失败停止次数过大")
+		return nil, errors.New(i18n.T("失败停止次数过大"))
 	}
 	if cfg.RatePerSec < MinRatePerSec || cfg.RatePerSec > MaxRatePerSec {
-		return nil, fmt.Errorf("发起速率需在 %d 到 %d 次/秒之间", MinRatePerSec, MaxRatePerSec)
+		return nil, fmt.Errorf(i18n.T("发起速率需在 %d 到 %d 次/秒之间"), MinRatePerSec, MaxRatePerSec)
 	}
 	if len(cfg.Domains) == 0 {
-		return nil, fmt.Errorf("请至少填写一个测试域名")
+		return nil, errors.New(i18n.T("请至少填写一个测试域名"))
 	}
 	if len(cfg.Domains) > 5000 {
-		return nil, fmt.Errorf("测试域名不能超过 5000 个")
+		return nil, errors.New(i18n.T("测试域名不能超过 5000 个"))
 	}
 
 	domains, invalid := NormalizeDomains(cfg.Domains)
@@ -211,12 +212,12 @@ func New(cfg Config) (*Engine, error) {
 		}
 		suffix := ""
 		if len(invalid) > len(shown) {
-			suffix = fmt.Sprintf(" 等 %d 个", len(invalid))
+			suffix = fmt.Sprintf(i18n.T(" 等 %d 个"), len(invalid))
 		}
-		return nil, fmt.Errorf("存在无法识别的域名: %s%s", strings.Join(shown, "、"), suffix)
+		return nil, fmt.Errorf(i18n.T("存在无法识别的域名: %s%s"), strings.Join(shown, i18n.T("、")), suffix)
 	}
 	if len(domains) == 0 {
-		return nil, fmt.Errorf("请至少填写一个有效的测试域名")
+		return nil, errors.New(i18n.T("请至少填写一个有效的测试域名"))
 	}
 	cfg.Domains = domains
 
@@ -269,7 +270,7 @@ func New(cfg Config) (*Engine, error) {
 	}
 	e.ctx, e.cancel = context.WithCancel(context.Background())
 	e.reason.Store("")
-	logger.start(func() { e.stopWithReason("日志暂存失败") })
+	logger.start(func() { e.stopWithReason(i18n.T("日志暂存失败")) })
 	return e, nil
 }
 
@@ -283,7 +284,7 @@ func (e *Engine) Start() {
 // defaults to 手动停止.
 func (e *Engine) Stop(reason string) {
 	if strings.TrimSpace(reason) == "" {
-		reason = "手动停止"
+		reason = i18n.T("手动停止")
 	}
 	e.stopWithReason(reason)
 }
@@ -413,7 +414,7 @@ func (e *Engine) run() {
 			e.finish()
 			return
 		case <-durationTimer.C:
-			e.stopWithReason("达到测试时长")
+			e.stopWithReason(i18n.T("达到测试时长"))
 			e.finish()
 			return
 		case <-ticker.C:
@@ -422,7 +423,7 @@ func (e *Engine) run() {
 				return
 			}
 			if time.Since(started) >= duration {
-				e.stopWithReason("达到测试时长")
+				e.stopWithReason(i18n.T("达到测试时长"))
 				e.finish()
 				return
 			}
@@ -440,7 +441,7 @@ func (e *Engine) finish() {
 
 	reason, _ := e.reason.Load().(string)
 	if reason == "" {
-		reason = "测试结束"
+		reason = i18n.T("测试结束")
 		e.reason.Store(reason)
 	}
 
@@ -526,7 +527,7 @@ func (e *Engine) targetHost(domain string, ip net.IP) (string, error) {
 	host := ip.String()
 	if literal, err := netip.ParseAddr(domain); err == nil && literal.Zone() != "" {
 		if e.iface != nil && literal.Zone() != e.iface.Name && literal.Zone() != strconv.Itoa(e.iface.Index) {
-			return literal.String(), fmt.Errorf("目标 IP 的 zone 不属于所选网卡")
+			return literal.String(), errors.New(i18n.T("目标 IP 的 zone 不属于所选网卡"))
 		}
 		return literal.String(), nil
 	}
@@ -578,7 +579,7 @@ func (e *Engine) recordResult(t target, ip string, started time.Time, ok bool, e
 	e.writeEntry(entry, now)
 
 	if !ok && e.cfg.FailStop > 0 && e.failed.Load() >= uint64(e.cfg.FailStop) {
-		e.stopWithReason("失败次数达到上限")
+		e.stopWithReason(i18n.T("失败次数达到上限"))
 	}
 }
 
@@ -606,7 +607,7 @@ func (e *Engine) writeEntry(entry LogEntry, now time.Time) {
 	err := e.logger.write(entry, now)
 	e.logMu.Unlock()
 	if err != nil {
-		e.stopWithReason("日志暂存失败")
+		e.stopWithReason(i18n.T("日志暂存失败"))
 	}
 }
 
@@ -732,7 +733,7 @@ type dnsResolver struct {
 
 func (r *dnsResolver) checkIP(ip net.IP) error {
 	if ip.To4() == nil && ip.To16() == nil {
-		return fmt.Errorf("目标 IP 地址族与所选源地址不匹配")
+		return errors.New(i18n.T("目标 IP 地址族与所选源地址不匹配"))
 	}
 	if r.sourceCheck != nil {
 		return r.sourceCheck(ip)
@@ -810,14 +811,14 @@ func (r *dnsResolver) lookup(ctx context.Context, host string) (net.IP, error) {
 	case err != nil:
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			if errors.Is(ctxErr, context.DeadlineExceeded) {
-				call.err = fmt.Errorf("DNS 解析超时: %w", err)
+				call.err = fmt.Errorf(i18n.T("DNS 解析超时: %w"), err)
 				cacheEntry = &dnsCacheEntry{err: call.err, expires: now.Add(dnsErrorTTL)}
 			} else {
 				// The test was stopped; do not cache a cancellation.
 				call.err = ctxErr
 			}
 		} else {
-			call.err = fmt.Errorf("DNS 解析失败: %w", err)
+			call.err = fmt.Errorf(i18n.T("DNS 解析失败: %w"), err)
 			cacheEntry = &dnsCacheEntry{err: call.err, expires: now.Add(dnsErrorTTL)}
 		}
 	default:
@@ -828,7 +829,7 @@ func (r *dnsResolver) lookup(ctx context.Context, host string) (net.IP, error) {
 			}
 		}
 		if len(usable) == 0 {
-			call.err = fmt.Errorf("DNS 未返回与所选源 IP 地址族或作用域匹配的 IP 地址")
+			call.err = errors.New(i18n.T("DNS 未返回与所选源 IP 地址族或作用域匹配的 IP 地址"))
 			cacheEntry = &dnsCacheEntry{err: call.err, expires: now.Add(dnsErrorTTL)}
 		} else {
 			call.ip = usable[0]
