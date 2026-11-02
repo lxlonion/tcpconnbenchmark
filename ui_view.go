@@ -370,16 +370,18 @@ func (v *nativeView) view(c *ui.Context) {
 		}
 		c.After(delay)
 	}
-	ui.Column(c).Fill().Padding(14).Gap(8).Children(func() {
-		v.header(c)
-		if v.editing {
-			v.domainEditor(c)
-			return
-		}
-		v.form(c)
-		v.stats(c)
-		v.logs(c)
-		v.footer(c)
+	ui.Column(c).Fill().Padding(14).AlignItems(ui.Center).Children(func() {
+		ui.Column(c.Key("main-content")).Fill().MaxWidth(1280).Gap(8).Children(func() {
+			v.header(c)
+			if v.editing {
+				v.domainEditor(c)
+				return
+			}
+			v.form(c)
+			v.stats(c)
+			v.logs(c)
+			v.footer(c)
+		})
 	})
 }
 
@@ -433,11 +435,12 @@ func (v *nativeView) form(c *ui.Context) {
 			}
 		})
 		ui.Row(c).Gap(16).AlignItems(ui.End).Children(func() {
-			ui.Grid(c).Columns(3).Gap(12).Grow(1).Children(func() {
+			ui.Grid(c).Columns(3).Gap(12).Width(444).Children(func() {
 				v.numberField(c, "发起速率（次/秒）", "rate", &v.rate, locked)
 				v.numberField(c, "测试时长（秒）", "duration", &v.duration, locked)
 				v.numberField(c, "失败停止（0 不限）", "fail-stop", &v.failStop, locked)
 			})
+			ui.Spacer(c)
 			if ui.Button(c.Key("domains"), fmt.Sprintf("域名 %d 个 · 编辑", len(v.domains))).Height(36).Width(132).Border(1, c.Theme().Border).Disabled(locked).Clicked() {
 				v.editDomains()
 			}
@@ -575,11 +578,23 @@ func (v *nativeView) footer(c *ui.Context) {
 	if v.session != "" && v.snapshot.Finished && (v.snapshot.LogPath == "" || v.snapshot.SummaryPath == "") {
 		ui.Text(c, "结果尚未保存，开始新测试或关闭后丢失").TextColor(c.Theme().Accent).SingleLine()
 	}
-	ui.Row(c).Gap(8).Children(func() {
-		if ui.Button(c.Key("storage-details"), "文件与路径").Label("文件与路径").Tooltip("显示或隐藏存储路径；支持完整复制").Clicked() {
+	ui.Row(c).Children(func() {
+		label := "▸ 日志"
+		if v.detailsOpen {
+			label = "▾ 日志"
+		}
+		if ui.Button(c.Key("storage-details"), label).Label("日志").Tooltip("展开或收起日志路径与结果操作").Clicked() {
 			v.detailsOpen = !v.detailsOpen
 		}
-		ui.Spacer(c)
+	})
+	if v.detailsOpen {
+		v.storageDetails(c)
+	}
+	v.statusBar(c)
+}
+
+func (v *nativeView) storageActions(c *ui.Context) {
+	ui.Row(c).Gap(8).Children(func() {
 		if ui.Button(c.Key("open-logs"), "打开目录").Disabled(v.closing || v.openPending != nil).Clicked() {
 			v.openPending = v.controller.OpenLogs()
 		}
@@ -591,8 +606,4 @@ func (v *nativeView) footer(c *ui.Context) {
 			v.exportResults()
 		}
 	})
-	if v.detailsOpen {
-		v.storageDetails(c)
-	}
-	v.statusBar(c)
 }

@@ -135,6 +135,7 @@ func (v *nativeView) storageDetails(c *ui.Context) {
 		pathField(c, "csv-path", "CSV 日志路径", &v.snapshot.LogPath)
 		pathField(c, "summary-path", "摘要文件路径", &v.snapshot.SummaryPath)
 		pathField(c, "log-dir", "日志目录", &v.boot.LogDir)
+		v.storageActions(c)
 	})
 }
 

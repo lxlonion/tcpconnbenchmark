@@ -46,7 +46,7 @@ func assertInViewport(t *testing.T, tt *ui.Tester, label string, width, height i
 }
 
 func TestPolishedStateLayouts(t *testing.T) {
-	for _, size := range [][2]int{{900, 650}, {1180, 780}} {
+	for _, size := range [][2]int{{900, 650}, {1180, 780}, {2000, 900}} {
 		for _, dark := range []bool{false, true} {
 			for _, state := range []string{"idle", "running", "finished"} {
 				t.Run(fmt.Sprintf("%s-%dx%d-dark%v", state, size[0], size[1], dark), func(t *testing.T) {
@@ -71,14 +71,14 @@ func TestPolishedStateLayouts(t *testing.T) {
 							t.Fatalf("both KPI groups shown: %s", label)
 						}
 					}
-					for _, label := range []string{"发起速率（次/秒）", "测试时长（秒）", "失败停止（0 不限）", "文件与路径", "保存结果", "文件句柄状态", "版本", "连接日志"} {
+					for _, label := range []string{"发起速率（次/秒）", "测试时长（秒）", "失败停止（0 不限）", "日志", "文件句柄状态", "版本", "连接日志"} {
 						assertInViewport(t, tt, label, size[0], size[1])
 					}
-					// Input bounds are equal-width; the primary action is larger than an input.
+					// Numeric inputs stay compact and equal-width even in wide windows.
 					a, _ := tt.Find("发起速率（次/秒）")
 					b, _ := tt.Find("测试时长（秒）")
 					d, _ := tt.Find("失败停止（0 不限）")
-					if math.Abs(float64(a.W-b.W)) > .01 || math.Abs(float64(a.W-d.W)) > .01 || a.Y != b.Y || a.Y != d.Y {
+					if a.W > 140 || math.Abs(float64(a.W-b.W)) > .01 || math.Abs(float64(a.W-d.W)) > .01 || a.Y != b.Y || a.Y != d.Y {
 						t.Fatalf("uneven parameters: %+v %+v %+v", a, b, d)
 					}
 					primary := "开始测试"
@@ -125,13 +125,16 @@ func TestPolishedPathsCollapsedAndOneClickCopy(t *testing.T) {
 	v.snapshot.LogPath = "/portable/" + strings.Repeat("long-directory/", 20) + "results.csv"
 	v.snapshot.SummaryPath = "/portable/" + strings.Repeat("long-directory/", 20) + "summary.txt"
 	tt := ui.NewTester(v.view, 900, 650)
-	for _, label := range []string{"应用目录", "域名配置路径", "CSV 日志路径", "摘要文件路径", "日志目录"} {
+	for _, label := range []string{"应用目录", "域名配置路径", "CSV 日志路径", "摘要文件路径", "日志目录", "打开目录", "保存结果"} {
 		if _, ok := tt.Find(label); ok {
 			t.Fatalf("path visible while collapsed: %s", label)
 		}
 	}
-	if err := tt.Click("文件与路径"); err != nil {
+	if err := tt.Click("日志"); err != nil {
 		t.Fatal(err)
+	}
+	for _, label := range []string{"打开目录", "保存结果"} {
+		assertInViewport(t, tt, label, 900, 650)
 	}
 	for _, p := range []struct{ label, value string }{{"应用目录", v.boot.AppDir}, {"域名配置路径", v.boot.ConfigPath}, {"CSV 日志路径", v.snapshot.LogPath}, {"摘要文件路径", v.snapshot.SummaryPath}, {"日志目录", v.boot.LogDir}} {
 		assertInViewport(t, tt, p.label, 900, 650)
@@ -142,11 +145,36 @@ func TestPolishedPathsCollapsedAndOneClickCopy(t *testing.T) {
 			t.Fatalf("wrong clipboard for %s", p.label)
 		}
 	}
-	if err := tt.Click("文件与路径"); err != nil {
+	if err := tt.Click("日志"); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := tt.Find("CSV 日志路径"); ok {
-		t.Fatal("details did not close")
+	for _, label := range []string{"CSV 日志路径", "打开目录", "保存结果"} {
+		if _, ok := tt.Find(label); ok {
+			t.Fatalf("details did not close: %s", label)
+		}
+	}
+}
+
+func TestContentWidthIsCappedAndCentered(t *testing.T) {
+	for _, width := range []int{900, 1180, 1600, 2400} {
+		v := polishView("idle")
+		tt := ui.NewTester(v.view, width, 780)
+		first := assertInViewport(t, tt, "指标：尝试", width, 780)
+		last := assertInViewport(t, tt, "指标：成功率", width, 780)
+		contentWidth := last.X + last.W - first.X
+		want := float32(min(width-28, 1280))
+		if math.Abs(float64(contentWidth-want)) > .5 || math.Abs(float64(first.X-(float32(width)-want)/2)) > .5 {
+			t.Fatalf("content not capped/centered at %d: first=%+v last=%+v", width, first, last)
+		}
+		if err := tt.Click("日志"); err != nil {
+			t.Fatal(err)
+		}
+		for _, label := range []string{"打开目录", "保存结果", "CSV 日志路径", "文件句柄状态", "连接日志"} {
+			r := assertInViewport(t, tt, label, width, 780)
+			if r.X < first.X-.5 || r.X+r.W > last.X+last.W+.5 {
+				t.Fatalf("%s outside centered content: %+v", label, r)
+			}
+		}
 	}
 }
 
@@ -276,7 +304,7 @@ func TestPolishedWarningsStayVisible(t *testing.T) {
 	if v.detailsOpen {
 		t.Fatal("warnings should not need expanded paths")
 	}
-	if err := tt.Click("文件与路径"); err != nil {
+	if err := tt.Click("日志"); err != nil {
 		t.Fatal(err)
 	}
 	for _, label := range []string{"应用目录", "域名配置路径", "CSV 日志路径", "摘要文件路径", "文件句柄状态", "版本"} {

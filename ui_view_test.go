@@ -148,7 +148,7 @@ func TestNativeViewLongPathsAccessible(t *testing.T) {
 	if _, ok := tt.Find("CSV 日志路径"); ok {
 		t.Fatal("paths should be collapsed by default")
 	}
-	if err := tt.Click("文件与路径"); err != nil {
+	if err := tt.Click("日志"); err != nil {
 		t.Fatal(err)
 	}
 	for _, item := range []struct{ label, want string }{{"CSV 日志路径", v.snapshot.LogPath}, {"摘要文件路径", v.snapshot.SummaryPath}} {
@@ -349,6 +349,9 @@ func TestNativeViewManualExportAndStaleSample(t *testing.T) {
 	s := &viewStub{}
 	v := newNativeView(s)
 	tt := ui.NewTester(v.view, 900, 650)
+	if err := tt.Click("日志"); err != nil {
+		t.Fatal(err)
+	}
 	_ = tt.Click("保存结果")
 	if len(s.exports) != 0 {
 		t.Fatal("idle exported")
