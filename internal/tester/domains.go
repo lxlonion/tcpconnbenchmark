@@ -127,8 +127,8 @@ func NormalizeDomain(raw string) (string, error) {
 			s = s[1 : len(s)-1]
 		} else if strings.Count(s, ":") == 1 {
 			// Treat example.com:443 as host plus port.
-			host, port, ok := strings.Cut(s, ":")
-			if ok && port != "" && allDigits(port) {
+			host, port, _ := strings.Cut(s, ":")
+			if allDigits(port) {
 				s = host
 			}
 		}

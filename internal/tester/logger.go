@@ -47,7 +47,6 @@ type resultLogger struct {
 	sessionID  string
 	createdAt  time.Time
 	config     Config
-	domains    []string
 	ifaceLabel string
 	fdInfo     syslimit.Info
 
@@ -68,7 +67,7 @@ type resultLogger struct {
 	createFile  func(string) (*os.File, error) // optional filesystem fault injection
 }
 
-func newResultLogger(cfg Config, domains []string, ifaceLabel string, fdInfo syslimit.Info) (*resultLogger, error) {
+func newResultLogger(cfg Config, ifaceLabel string, fdInfo syslimit.Info) (*resultLogger, error) {
 	dir, err := os.MkdirTemp("", "tcpconnbenchmark-journal-")
 	if err != nil {
 		return nil, fmt.Errorf("创建日志暂存目录失败: %w", err)
@@ -80,9 +79,10 @@ func newResultLogger(cfg Config, domains []string, ifaceLabel string, fdInfo sys
 		return nil, fmt.Errorf("创建日志暂存文件失败: %w", err)
 	}
 	now := time.Now()
+	cfg.Domains = append([]string(nil), cfg.Domains...)
 	return &resultLogger{
 		sessionID: "tcp-test-" + now.Format("20060102-150405-000") + "-" + filepath.Base(dir)[len("tcpconnbenchmark-journal-"):],
-		createdAt: now, config: cfg, domains: append([]string(nil), domains...), ifaceLabel: ifaceLabel, fdInfo: fdInfo,
+		createdAt: now, config: cfg, ifaceLabel: ifaceLabel, fdInfo: fdInfo,
 		tempDir: dir, journalPath: path, file: f, queue: make(chan journalRecord, journalQueueSize), writerDone: make(chan struct{}),
 	}, nil
 }
@@ -332,7 +332,7 @@ func (l *resultLogger) summary(snap Snapshot, paths ExportResult) string {
 	var b strings.Builder
 	b.WriteString("tcpconnbenchmark · TCP 并发连接测试\n========================================\n")
 	fmt.Fprintf(&b, "会话 ID: %s\n状态: %s\n开始时间: %s\n结束时间: %s\n", l.sessionID, snap.StopReason, l.createdAt.Format("2006-01-02 15:04:05"), snap.EndedAt)
-	fmt.Fprintf(&b, "测试模式: %s\n出口网卡: %s\n测试域名: %d 个\n发起目标: %d 个（域名 × 端口）\n测试时长: %d 秒\n", ModeLabel(l.config.Mode), l.ifaceLabel, len(l.domains), len(l.domains)*len(modePorts(l.config.Mode)), l.config.DurationSec)
+	fmt.Fprintf(&b, "测试模式: %s\n出口网卡: %s\n测试域名: %d 个\n发起目标: %d 个（域名 × 端口）\n测试时长: %d 秒\n", ModeLabel(l.config.Mode), l.ifaceLabel, len(l.config.Domains), len(l.config.Domains)*len(modePorts(l.config.Mode)), l.config.DurationSec)
 	if l.config.FailStop > 0 {
 		fmt.Fprintf(&b, "失败停止: %d 次\n", l.config.FailStop)
 	} else {
@@ -353,10 +353,10 @@ func (l *resultLogger) summary(snap Snapshot, paths ExportResult) string {
 	} else {
 		b.WriteString("成功率: —\n")
 	}
-	fmt.Fprintf(&b, "峰值并发: %d\n平均发起速率: %.2f 次/秒\n停止原因: %s\n----------------------------------------\n测试域名（%d）:\n", snap.Max, snap.AvgRate, snap.StopReason, len(l.domains))
-	for i, domain := range l.domains {
+	fmt.Fprintf(&b, "峰值并发: %d\n平均发起速率: %.2f 次/秒\n停止原因: %s\n----------------------------------------\n测试域名（%d）:\n", snap.Max, snap.AvgRate, snap.StopReason, len(l.config.Domains))
+	for i, domain := range l.config.Domains {
 		fmt.Fprintf(&b, "%3d. %s\n", i+1, domain)
 	}
-	b.WriteString("----------------------------------------\n说明: 仅解析 IPv4 并建立 TCP 连接；不发送 HTTP 请求、不进行 TLS 握手、不传输网页数据。\n")
+	b.WriteString("----------------------------------------\n说明: 仅解析 IPv4 / IPv6 地址并建立 TCP 连接；不发送 HTTP 请求、不进行 TLS 握手、不传输网页数据。\n")
 	return b.String()
 }

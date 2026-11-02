@@ -138,19 +138,16 @@ type Snapshot struct {
 
 // Engine owns one running test. Create it with New, then call Start.
 type Engine struct {
-	cfg        Config
-	domains    []string
-	targets    []target
-	ifaceLabel string
-	dialer     *net.Dialer
-	sources    interfaceSources
-	iface      *net.Interface
+	cfg     Config
+	targets []target
+	dialer  *net.Dialer
+	sources interfaceSources
+	iface   *net.Interface
 
-	logger    *resultLogger
-	sessionID string
-	ring      *logRing
-	logSeq    atomic.Uint64
-	logMu     sync.Mutex
+	logger *resultLogger
+	ring   *logRing
+	logSeq atomic.Uint64
+	logMu  sync.Mutex
 
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -246,24 +243,21 @@ func New(cfg Config) (*Engine, error) {
 	}
 
 	fdInfo := syslimit.Raise(FDSoftLimitTarget)
-	logger, err := newResultLogger(cfg, domains, ifaceLabel, fdInfo)
+	logger, err := newResultLogger(cfg, ifaceLabel, fdInfo)
 	if err != nil {
 		return nil, err
 	}
 
 	e := &Engine{
-		cfg:        cfg,
-		domains:    domains,
-		ifaceLabel: ifaceLabel,
-		dialer:     dialer,
-		sources:    sources,
-		iface:      iface,
-		logger:     logger,
-		sessionID:  logger.sessionID,
-		ring:       newLogRing(4096),
-		done:       make(chan struct{}),
-		conns:      make(map[uint64]net.Conn),
-		resolver:   newDNSResolver(),
+		cfg:      cfg,
+		dialer:   dialer,
+		sources:  sources,
+		iface:    iface,
+		logger:   logger,
+		ring:     newLogRing(4096),
+		done:     make(chan struct{}),
+		conns:    make(map[uint64]net.Conn),
+		resolver: newDNSResolver(),
 	}
 	if iface != nil {
 		e.resolver.sourceCheck = e.checkSource
@@ -360,7 +354,7 @@ func (e *Engine) Snapshot() Snapshot {
 	paths := e.logger.paths()
 
 	return Snapshot{
-		SessionID:      e.sessionID,
+		SessionID:      e.logger.sessionID,
 		Stopping:       e.stopping.Load() && !finished,
 		Finished:       finished,
 		EndedAt:        endedAt,
@@ -378,8 +372,8 @@ func (e *Engine) Snapshot() Snapshot {
 		SuccessRate:    successRate,
 		AvgRate:        avgRate,
 		ModeLabel:      ModeLabel(e.cfg.Mode),
-		InterfaceLabel: e.ifaceLabel,
-		DomainCount:    len(e.domains),
+		InterfaceLabel: e.logger.ifaceLabel,
+		DomainCount:    len(e.cfg.Domains),
 		FailStop:       e.cfg.FailStop,
 		RatePerSec:     e.cfg.RatePerSec,
 		StopReason:     reason,

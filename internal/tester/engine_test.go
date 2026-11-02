@@ -1,7 +1,9 @@
 package tester
 
 import (
+	"net"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -53,6 +55,96 @@ func TestNormalizeDomain(t *testing.T) {
 		}
 		if got != tt.want {
 			t.Errorf("%q: 得到 %q，期望 %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestNormalizeDomainPortAndZoneRegression(t *testing.T) {
+	tests := []struct {
+		in, want, wantErr string
+	}{
+		{"example.com:", "example.com", ""},
+		{"example.com:abc", "example.com", ""},
+		{"example.com:123abc", "example.com", ""},
+		{"example.com:443", "example.com", ""},
+		{"example.com:65536", "example.com", ""},
+		{":443", "", "域名为空"},
+		{":abc", "", "域名为空"},
+		{"http://example.com:/path", "example.com", ""},
+		{"http://example.com:abc/path", "", "无法解析网址"},
+		{"https://EXAMPLE.com:65536/path", "example.com", ""},
+		{"192.0.2.1:", "192.0.2.1", ""},
+		{"192.0.2.1:not-a-port", "192.0.2.1", ""},
+		{"192.0.2.1:443", "192.0.2.1", ""},
+		{"2001:db8::1", "2001:db8::1", ""},
+		{"[2001:db8::1]:", "2001:db8::1", ""},
+		{"[2001:db8::1]:abc", "2001:db8::1", ""},
+		{"[2001:db8::1]:443", "2001:db8::1", ""},
+		{"[::ffff:192.0.2.1]:443", "192.0.2.1", ""},
+		{"fe80::1%en0", "fe80::1%en0", ""},
+		{"[fe80::1%en0]", "fe80::1%en0", ""},
+		{"[fe80::1%en0]:", "fe80::1%en0", ""},
+		{"[fe80::1%en0]:abc", "fe80::1%en0", ""},
+		{"http://[fe80::1%25en0]:/path", "fe80::1%en0", ""},
+		{"http://[fe80::1%25en0]:443/path", "fe80::1%en0", ""},
+		{"http://[fe80::1%25en0]:abc/path", "", "无法解析网址"},
+		{"[example.com:443", "", "域名格式无效"},
+		{"example.com]:443", "", "域名格式无效"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			got, err := NormalizeDomain(tt.in)
+			if tt.wantErr != "" {
+				if got != "" || err == nil || err.Error() != tt.wantErr {
+					t.Fatalf("NormalizeDomain(%q) = %q, %v; want error %q", tt.in, got, err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Fatalf("NormalizeDomain(%q) = %q, %v; want %q", tt.in, got, err, tt.want)
+			}
+		})
+	}
+	t.Run("single-colon-fallback", func(t *testing.T) {
+		// An extra ']' makes SplitHostPort fail, forcing the single-colon fallback.
+		for _, input := range []string{
+			"example.com:abc]",
+			"example.com:]",
+			"example.com:443]",
+			"example.com]:",
+			"example.com]:abc",
+			"example.com]:443",
+		} {
+			t.Run(input, func(t *testing.T) {
+				if strings.Count(input, ":") != 1 {
+					t.Fatalf("fixture must contain exactly one colon: %q", input)
+				}
+				if _, _, err := net.SplitHostPort(input); err == nil {
+					t.Fatalf("SplitHostPort(%q) unexpectedly succeeded", input)
+				}
+				got, err := NormalizeDomain(input)
+				if got != "" || err == nil || err.Error() != "域名格式无效" {
+					t.Fatalf("NormalizeDomain(%q) = %q, %v; want error %q", input, got, err, "域名格式无效")
+				}
+			})
+		}
+	})
+}
+
+func TestAllDigits(t *testing.T) {
+	for _, tt := range []struct {
+		in   string
+		want bool
+	}{
+		{"", false},
+		{"0", true},
+		{"0123456789", true},
+		{"443abc", false},
+		{"-1", false},
+		{"４４３", false},
+	} {
+		if got := allDigits(tt.in); got != tt.want {
+			t.Errorf("allDigits(%q) = %v, want %v", tt.in, got, tt.want)
 		}
 	}
 }
