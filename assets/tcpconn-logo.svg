@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1254" height="1254" viewBox="0 0 1254 1254" role="img" aria-labelledby="title desc">
+  <title id="title">Tcpconn — TCP connection stress test</title>
+  <desc id="desc">Square midnight navy background, large white Tcp above smaller light-gray conn, and a red recording light in the upper-right.</desc>
+  <metadata>
+    Letterforms: Inter Bold and Inter SemiBold, converted to vector outlines.
+    Inter copyright (c) The Inter Project Authors. Source: https://github.com/rsms/inter
+    Licensed under SIL Open Font License 1.1: https://github.com/rsms/inter/blob/master/LICENSE.txt
+    No embedded font, remote asset, or raster image. The logo artwork is an original vector composition.
+  </metadata>
+  <rect x="0" y="0" width="1254" height="1254" fill="#070F21"/>
+    <g fill="#F9FAFC" transform="translate(196.76572 715.52096) scale(0.21645702 -0.21645702)">
+      <path transform="translate(0.000 0)" d="M75 1237H531V0H837V1237H1292V1490H75Z"/>
+      <path transform="translate(1436.400 0)" d="M628 -22C896 -22 1085 123 1127 358L848 409C824 288 747 214 631 214C471 214 387 355 387 555C387 757 471 896 631 896C747 896 821 824 846 708L1125 760C1083 990 893 1132 628 1132C291 1132 81 900 81 554C81 210 291 -22 628 -22Z"/>
+      <path transform="translate(2710.800 0)" d="M128 -418H428V179H437C479 89 571 -19 754 -19C1012 -19 1209 185 1209 557C1209 939 1004 1132 756 1132C566 1132 478 1019 437 930H423V1118H128ZM662 222C509 222 421 356 421 558C421 761 508 892 662 892C819 892 902 754 902 558C902 361 818 222 662 222Z"/>
+    </g>
+    <g fill="#E3E9F2" transform="translate(305.59740 975.31169) scale(0.11688312 -0.11688312)">
+      <path transform="translate(0.000 0)" d="M623 -23C874 -23 1060 113 1108 336L865 387C838 266 753 188 625 188C444 188 354 347 354 554C354 763 444 921 625 921C751 921 834 846 862 730L1105 781C1057 999 872 1132 623 1132C297 1132 89 901 89 553C89 209 297 -23 623 -23Z"/>
+      <path transform="translate(1398.800 0)" d="M623 -23C949 -23 1158 209 1158 553C1158 901 949 1132 623 1132C297 1132 89 901 89 553C89 209 297 -23 623 -23ZM623 188C442 188 354 350 354 554C354 760 442 921 623 921C805 921 894 760 894 554C894 350 805 188 623 188Z"/>
+      <path transform="translate(2851.600 0)" d="M398 655C398 817 498 911 637 911C773 911 855 821 855 671V0H1115V711C1115 980 963 1132 733 1132C569 1132 453 1052 387 895L384 1118H138V0H398Z"/>
+      <path transform="translate(4310.400 0)" d="M398 655C398 817 498 911 637 911C773 911 855 821 855 671V0H1115V711C1115 980 963 1132 733 1132C569 1132 453 1052 387 895L384 1118H138V0H398Z"/>
+    </g>
+  <circle cx="960" cy="323" r="78" fill="#FF2835"/>
+</svg>

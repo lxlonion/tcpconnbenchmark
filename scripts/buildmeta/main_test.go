@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"debug/elf"
 	"debug/pe"
 	"os"
@@ -84,7 +85,7 @@ func TestPlistAndSafeBranchFlags(t *testing.T) {
 	if strings.Contains(flags, dev.Branch) || !strings.Contains(flags, "tcpconnbenchmark/internal/buildinfo.branchHex=666561747572652f612662") || !strings.HasPrefix(flags, "-s -w ") {
 		t.Fatalf("unsafe linker flags: %q", flags)
 	}
-	for _, want := range []string{"<string>tcpconnbenchmark</string>", "<string>app.tcpconnbenchmark.desktop</string>", "<key>tcpconnbenchmarkBuildLabel</key>"} {
+	for _, want := range []string{"<string>tcpconnbenchmark</string>", "<string>app.tcpconnbenchmark.desktop</string>", "<key>tcpconnbenchmarkBuildLabel</key>", "<key>CFBundleIconFile</key>\n\t<string>tcpconn.icns</string>"} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("development plist missing %q", want)
 		}
@@ -116,6 +117,7 @@ func makeFixture(t *testing.T) string {
 		"main.go":                               "scripts/buildmeta/main.go",
 		"../../internal/buildinfo/buildinfo.go": "internal/buildinfo/buildinfo.go",
 		"../../packaging/Info.plist":            "packaging/Info.plist",
+		"../../packaging/tcpconn.icns":          "packaging/tcpconn.icns",
 	} {
 		data, err := os.ReadFile(src)
 		if err != nil {
@@ -165,10 +167,45 @@ func TestMakeDefaultArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("make app: %v\n%s", err, out)
 	}
-	for _, path := range []string{"tcpconnbenchmark.app/Contents/Info.plist", "tcpconnbenchmark.app/Contents/MacOS/tcpconnbenchmark"} {
+	for _, path := range []string{"tcpconnbenchmark.app/Contents/Info.plist", "tcpconnbenchmark.app/Contents/MacOS/tcpconnbenchmark", "tcpconnbenchmark.app/Contents/Resources/tcpconn.icns"} {
 		if _, err := os.Stat(filepath.Join(dir, path)); err != nil {
 			t.Errorf("default app artifact %s: %v", path, err)
 		}
+	}
+	want, err := os.ReadFile(filepath.Join(dir, "packaging/tcpconn.icns"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "tcpconnbenchmark.app/Contents/Resources/tcpconn.icns"))
+	if err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("bundled icon differs from source: %v", err)
+	}
+	if out, err := exec.Command("codesign", "--verify", "--strict", filepath.Join(dir, "tcpconnbenchmark.app")).CombinedOutput(); err != nil {
+		t.Fatalf("app signature: %v\n%s", err, out)
+	}
+}
+
+func TestMakeAppMissingIconPreservesExistingApp(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("app bundles require macOS")
+	}
+	dir := makeFixture(t)
+	marker := filepath.Join(dir, "tcpconnbenchmark.app", "marker")
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, []byte("existing"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "packaging/tcpconn.icns")); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runMake(dir, runtime.GOOS, runtime.GOARCH, "app")
+	if err == nil || !strings.Contains(string(out), "读取应用图标失败") {
+		t.Fatalf("missing icon: %v\n%s", err, out)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "existing" {
+		t.Fatalf("existing app was not preserved: %q (%v)", data, err)
 	}
 }
 

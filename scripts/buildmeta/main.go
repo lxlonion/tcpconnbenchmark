@@ -107,6 +107,10 @@ func bundle(binary, app string, m buildinfo.Metadata) error {
 	if err != nil {
 		return err
 	}
+	icon, err := os.ReadFile("packaging/tcpconn.icns")
+	if err != nil {
+		return fmt.Errorf("读取应用图标失败: %w", err)
+	}
 	if err := os.RemoveAll(app); err != nil {
 		return err
 	}
@@ -115,6 +119,13 @@ func bundle(binary, app string, m buildinfo.Metadata) error {
 		return err
 	}
 	if err := os.WriteFile(filepath.Join(app, "Contents", "Info.plist"), content, 0o644); err != nil {
+		return err
+	}
+	resources := filepath.Join(app, "Contents", "Resources")
+	if err := os.MkdirAll(resources, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(resources, "tcpconn.icns"), icon, 0o644); err != nil {
 		return err
 	}
 	input, err := os.Open(binary)

@@ -1,5 +1,7 @@
 # tcpconnbenchmark
 
+<img src="assets/tcpconn-logo.svg" alt="tcpconnbenchmark Logo" width="160">
+
 [中文](README.md)
 
 A TCP concurrent connection testing tool written in Go with [MyGo Native UI](https://github.com/egoist/mygo). It offers a graphical interface and a CLI. It only performs DNS resolution and TCP connections; it does not send HTTP requests or perform TLS handshakes.

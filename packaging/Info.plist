@@ -8,6 +8,8 @@
 	<string>tcpconnbenchmark</string>
 	<key>CFBundleExecutable</key>
 	<string>tcpconnbenchmark</string>
+	<key>CFBundleIconFile</key>
+	<string>tcpconn.icns</string>
 	<key>CFBundleIdentifier</key>
 	<string>app.tcpconnbenchmark.desktop</string>
 	<key>CFBundleInfoDictionaryVersion</key>

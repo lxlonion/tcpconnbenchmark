@@ -1,5 +1,7 @@
 # tcpconnbenchmark
 
+<img src="assets/tcpconn-logo.svg" alt="tcpconnbenchmark Logo" width="160">
+
 [English](README.en.md)
 
 使用 Go 和 [MyGo Native UI](https://github.com/egoist/mygo) 编写的 TCP 并发连接测试工具，提供图形界面和命令行模式。仅进行 DNS 解析和 TCP 连接，不发送 HTTP 请求或进行 TLS 握手。
