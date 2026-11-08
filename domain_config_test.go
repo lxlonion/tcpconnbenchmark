@@ -126,3 +126,122 @@ func TestUnavailableAppDirectoryDoesNotFallback(t *testing.T) {
 		waitClosed(t, a.Shutdown())
 	}
 }
+
+func TestCustomDomainConfigPath(t *testing.T) {
+	dir, external := t.TempDir(), t.TempDir()
+	path := filepath.Join(external, "custom.json")
+	if err := os.WriteFile(path, []byte(`{"domains":["selected.example"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := newAppInDirectory(syslimit.Info{}, dir)
+	t.Cleanup(func() { waitClosed(t, a.Shutdown()) })
+	loaded, err := loadDomainConfigFile(path, nil, false)
+	if err != nil || !reflect.DeepEqual(loaded, []string{"selected.example"}) {
+		t.Fatalf("load: %v %v", loaded, err)
+	}
+	if r := getResult(t, a.SaveDomainsAt(path, loaded)); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	restarted := newAppInDirectory(syslimit.Info{}, dir)
+	t.Cleanup(func() { waitClosed(t, restarted.Shutdown()) })
+	if b := restarted.Bootstrap(); b.ConfigPath != path || !reflect.DeepEqual(b.Domains, loaded) {
+		t.Fatalf("restart: %+v", b)
+	}
+	if r := getResult(t, restarted.SaveDomains(restarted.Bootstrap().BuiltinDomains)); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("restoring builtins removed external file: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadDomainConfigFile(path, nil, false); err == nil {
+		t.Fatal("invalid custom configuration was accepted")
+	}
+	bad := newAppInDirectory(syslimit.Info{}, dir)
+	t.Cleanup(func() { waitClosed(t, bad.Shutdown()) })
+	if b := bad.Bootstrap(); b.ConfigPath != path || b.ConfigError == "" {
+		t.Fatalf("bad custom config: %+v", b)
+	}
+}
+
+func TestInvalidPathPreferenceRepairedOnSave(t *testing.T) {
+	dir := t.TempDir()
+	pref := filepath.Join(dir, "domain-config-path.json")
+	if err := os.WriteFile(pref, []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := newAppInDirectory(syslimit.Info{}, dir)
+	t.Cleanup(func() { waitClosed(t, a.Shutdown()) })
+	if a.Bootstrap().ConfigError == "" {
+		t.Fatal("invalid preference was not reported")
+	}
+	want := []string{"recovered.example"}
+	if r := getResult(t, a.SaveDomains(want)); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	restarted := newAppInDirectory(syslimit.Info{}, dir)
+	t.Cleanup(func() { waitClosed(t, restarted.Shutdown()) })
+	if b := restarted.Bootstrap(); b.ConfigError != "" || !reflect.DeepEqual(b.Domains, want) {
+		t.Fatalf("restart after repair: %+v", b)
+	}
+}
+
+func TestPathPreferenceFailureCanBeRetried(t *testing.T) {
+	dir := t.TempDir()
+	pref := filepath.Join(dir, "domain-config-path.json")
+	if err := os.Mkdir(pref, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	a := newAppInDirectory(syslimit.Info{}, dir)
+	t.Cleanup(func() { waitClosed(t, a.Shutdown()) })
+	want := []string{"retry.example"}
+	if r := getResult(t, a.SaveDomains(want)); r.Err == nil {
+		t.Fatal("failed preference write reported success")
+	}
+	if a.Bootstrap().ConfigError == "" {
+		t.Fatal("failed preference write cleared error")
+	}
+	if err := os.Remove(pref); err != nil {
+		t.Fatal(err)
+	}
+	if r := getResult(t, a.SaveDomains(want)); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	restarted := newAppInDirectory(syslimit.Info{}, dir)
+	t.Cleanup(func() { waitClosed(t, restarted.Shutdown()) })
+	if b := restarted.Bootstrap(); b.ConfigError != "" || !reflect.DeepEqual(b.Domains, want) {
+		t.Fatalf("restart after retry: %+v", b)
+	}
+}
+
+func TestCustomSwitchPreferenceFailureRetry(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(t.TempDir(), "custom.json")
+	a := newAppInDirectory(syslimit.Info{}, dir)
+	t.Cleanup(func() { waitClosed(t, a.Shutdown()) })
+	before := a.Bootstrap()
+	pref := filepath.Join(dir, "domain-config-path.json")
+	if err := os.Mkdir(pref, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"custom.example"}
+	if r := getResult(t, a.SaveDomainsAt(path, want)); r.Err == nil {
+		t.Fatal("switch succeeded despite preference write failure")
+	}
+	if b := a.Bootstrap(); b.ConfigPath != before.ConfigPath || !reflect.DeepEqual(b.Domains, before.Domains) {
+		t.Fatalf("failed switch changed active config: %+v", b)
+	}
+	if err := os.Remove(pref); err != nil {
+		t.Fatal(err)
+	}
+	if r := getResult(t, a.SaveDomainsAt(path, want)); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	restarted := newAppInDirectory(syslimit.Info{}, dir)
+	t.Cleanup(func() { waitClosed(t, restarted.Shutdown()) })
+	if b := restarted.Bootstrap(); b.ConfigPath != path || !reflect.DeepEqual(b.Domains, want) {
+		t.Fatalf("restart after custom retry: %+v", b)
+	}
+}

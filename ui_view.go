@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -16,22 +17,26 @@ import (
 type nativeView struct {
 	controller          guiController
 	window              *mygo.Window
+	domainWindow        *mygo.Window
 	boot                bootstrapData
 	closing, allowClose bool
 
-	domains                  []string
-	draft                    string
-	editing                  bool
-	mode                     int
-	iface                    string
-	sourceIP                 string
-	interfacePickerOpen      bool
-	interfaceExpanded        map[string]*bool
-	interfaces               []tester.InterfaceInfo
-	rate, duration, failStop string
-	message                  string
-	detailsOpen              bool
-	logsCleared              bool
+	domains                                         []string
+	draft                                           string
+	domainPath, loadedDomainPath, loadedDomainDraft string
+	loadedDomainUsable                              bool
+	domainDialogOpen                                bool
+	editing                                         bool
+	mode                                            int
+	iface                                           string
+	sourceIP                                        string
+	interfacePickerOpen                             bool
+	interfaceExpanded                               map[string]*bool
+	interfaces                                      []tester.InterfaceInfo
+	rate, duration, failStop                        string
+	message                                         string
+	detailsOpen                                     bool
+	logsCleared                                     bool
 
 	snapshot                                 tester.Snapshot
 	session                                  string
@@ -275,9 +280,11 @@ func (v *nativeView) poll(now time.Time) {
 					v.message = i18n.T("保存域名失败：") + r.Err.Error()
 				} else {
 					v.domains = append([]string(nil), r.Value...)
+					v.boot.ConfigPath = v.loadedDomainPath
 					v.boot.ConfigError = ""
 					v.editing = false
 					v.message = fmt.Sprintf(i18n.T("已保存并应用 %d 个域名，忽略 %d 个无效项"), len(v.domains), v.saveDomainsIgnored)
+					v.closeDomainWindow()
 				}
 			}
 		default:
@@ -322,10 +329,125 @@ func (v *nativeView) shownEntries() []tester.LogEntry {
 }
 
 func (v *nativeView) editDomains() {
-	if !v.locked() {
+	if !v.locked() && !v.editing {
 		v.draft = strings.Join(v.domains, "\n")
+		v.domainPath, v.loadedDomainPath, v.loadedDomainDraft = v.boot.ConfigPath, v.boot.ConfigPath, v.draft
+		v.loadedDomainUsable = v.boot.ConfigError == "" || v.boot.ConfigPath == filepath.Join(v.boot.AppDir, "domains.json")
 		v.editing = true
+		if v.window != nil {
+			v.window.Update(func() {
+				if !v.editing || v.closing {
+					return
+				}
+				child := mygo.NewWindow(mygo.WindowOptions{
+					Title: i18n.T("编辑测试域名"), Width: 800, Height: 650,
+					MinWidth: 600, MinHeight: 450, Parent: v.window, Modal: true,
+					Content: ui.View(v.domainEditorView),
+				})
+				v.domainWindow = child
+				child.OnClose(func(event *mygo.CloseEvent) {
+					if v.saveDomainsPending != nil || v.domainDialogOpen {
+						event.PreventDefault()
+					}
+				})
+				child.OnClosed(func() {
+					v.domainWindow = nil
+					v.editing = false
+					v.window.Invalidate()
+				})
+			})
+		}
 	}
+}
+
+// Loading another file replaces the draft only after explicit confirmation.
+func (v *nativeView) loadDomainPath(path string, choose bool) {
+	child := v.domainWindow
+	if child == nil || v.domainDialogOpen {
+		return
+	}
+	v.domainDialogOpen = true
+	dirty := v.draft != v.loadedDomainDraft
+	go func() {
+		selection := prepareDomainLoad(path, choose, dirty,
+			func(path string) ([]string, error) {
+				return mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: child, Title: i18n.T("打开域名配置文件"), DefaultPath: path})
+			},
+			func() (bool, error) {
+				result, err := mygo.Dialog.Message(mygo.MessageOptions{Parent: child, Title: i18n.T("放弃当前草稿？"), Message: i18n.T("加载其他配置文件将替换尚未保存的草稿。"), Buttons: []string{i18n.T("取消"), i18n.T("继续加载")}, CancelButton: 0})
+				return result.Button == 1, err
+			})
+		child.Update(func() {
+			v.finishDomainLoad(selection)
+		})
+	}()
+}
+
+type domainLoadResult struct {
+	path     string
+	domains  []string
+	canceled bool
+	err      error
+}
+
+func prepareDomainLoad(path string, choose, dirty bool, open func(string) ([]string, error), confirm func() (bool, error)) domainLoadResult {
+	if choose {
+		paths, err := open(path)
+		if err != nil {
+			return domainLoadResult{err: err}
+		}
+		if len(paths) == 0 {
+			return domainLoadResult{canceled: true}
+		}
+		path = paths[0]
+	}
+	if dirty {
+		ok, err := confirm()
+		if err != nil {
+			return domainLoadResult{err: err}
+		}
+		if !ok {
+			return domainLoadResult{canceled: true}
+		}
+	}
+	if !filepath.IsAbs(path) {
+		return domainLoadResult{err: fmt.Errorf("%s", i18n.T("配置文件路径须为绝对路径"))}
+	}
+	path = filepath.Clean(path)
+	domains, err := loadDomainConfigFile(path, nil, false)
+	return domainLoadResult{path: path, domains: domains, err: err}
+}
+
+func (v *nativeView) finishDomainLoad(r domainLoadResult) {
+	v.domainDialogOpen = false
+	if r.canceled {
+		return
+	}
+	if r.err != nil {
+		v.message = i18n.T("打开域名配置失败：") + r.err.Error()
+		return
+	}
+	v.domainPath, v.loadedDomainPath = r.path, r.path
+	v.loadedDomainUsable = true
+	v.draft = strings.Join(r.domains, "\n")
+	v.loadedDomainDraft = v.draft
+	v.message = i18n.T("已加载配置；保存并应用后记住该位置")
+}
+
+func (v *nativeView) closeDomainWindow() {
+	if child := v.domainWindow; child != nil {
+		child.Update(func() { child.Close() })
+	}
+}
+
+func (v *nativeView) domainEditorView(c *ui.Context) {
+	v.poll(c.Now())
+	if v.needsWake() {
+		c.After(200 * time.Millisecond)
+	}
+	ui.Column(c).Fill().Padding(14).Gap(8).Children(func() {
+		v.domainEditor(c)
+	})
 }
 func (v *nativeView) applyDomains() {
 	if v.closing || v.saveDomainsPending != nil {
@@ -337,7 +459,11 @@ func (v *nativeView) applyDomains() {
 		return
 	}
 	v.saveDomainsIgnored = len(invalid)
-	v.saveDomainsPending = v.controller.SaveDomains(valid)
+	if v.domainPath != v.loadedDomainPath || !v.loadedDomainUsable {
+		v.message = i18n.T("请先加载指定的配置文件")
+		return
+	}
+	v.saveDomainsPending = v.controller.SaveDomainsAt(v.loadedDomainPath, valid)
 	v.message = i18n.T("正在保存域名…")
 }
 
@@ -372,10 +498,6 @@ func (v *nativeView) view(c *ui.Context) {
 	ui.Column(c).Fill().Padding(14).AlignItems(ui.Center).Children(func() {
 		ui.Column(c.Key("main-content")).Fill().MaxWidth(1280).Gap(8).Children(func() {
 			v.header(c)
-			if v.editing {
-				v.domainEditor(c)
-				return
-			}
 			v.form(c)
 			v.stats(c)
 			v.logs(c)
@@ -440,9 +562,17 @@ func (v *nativeView) numberField(c *ui.Context, label, key string, value *string
 
 func (v *nativeView) domainEditor(c *ui.Context) {
 	valid, invalid := tester.NormalizeDomains([]string{v.draft})
-	locked := v.closing || v.saveDomainsPending != nil
+	locked := v.closing || v.saveDomainsPending != nil || v.domainDialogOpen
 	ui.Text(c, i18n.T("测试域名：每行一个，也可粘贴网址；空行和 # 注释会被忽略")).Bold()
-	ui.Text(c, i18n.T("配置文件：")+v.boot.ConfigPath).SingleLine()
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, i18n.T("配置文件："))
+		if ui.TextInput(c.Key("domain-path"), &v.domainPath).Label(i18n.T("配置文件路径（输入后按回车加载）")).Grow(1).Disabled(locked).Submitted() && !locked {
+			v.loadDomainPath(v.domainPath, false)
+		}
+		if ui.Button(c.Key("domain-open"), i18n.T("打开")).Disabled(locked).Clicked() {
+			v.loadDomainPath(v.domainPath, true)
+		}
+	})
 	ui.Text(c, fmt.Sprintf(i18n.T("有效 %d 个 · 无效 %d 个（最多 5000 个）"), len(valid), len(invalid)))
 	if len(invalid) > 0 {
 		ui.Text(c, i18n.T("无效：")+strings.Join(invalid[:min(3, len(invalid))], "、")).SingleLine()
@@ -458,12 +588,13 @@ func (v *nativeView) domainEditor(c *ui.Context) {
 		ui.Spacer(c)
 		if ui.Button(c.Key("domain-cancel"), i18n.T("取消")).Disabled(locked).Clicked() {
 			v.editing = false
+			v.closeDomainWindow()
 		}
 		label := "保存并应用"
 		if v.saveDomainsPending != nil {
 			label = "正在保存…"
 		}
-		if ui.PrimaryButton(c.Key("domain-apply"), i18n.T(label)).Disabled(locked || len(valid) == 0 || len(valid) > 5000).Clicked() {
+		if ui.PrimaryButton(c.Key("domain-apply"), i18n.T(label)).Disabled(locked || v.domainPath != v.loadedDomainPath || !v.loadedDomainUsable || len(valid) == 0 || len(valid) > 5000).Clicked() {
 			v.applyDomains()
 		}
 	})

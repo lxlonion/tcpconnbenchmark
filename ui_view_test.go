@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image/png"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -57,6 +58,9 @@ func (s *viewStub) SaveDomains(domains []string) <-chan result[[]string] {
 	s.savedDomains = append(s.savedDomains, append([]string(nil), domains...))
 	s.save = make(chan result[[]string], 1)
 	return s.save
+}
+func (s *viewStub) SaveDomainsAt(_ string, domains []string) <-chan result[[]string] {
+	return s.SaveDomains(domains)
 }
 func (s *viewStub) Export(session string) <-chan result[tester.ExportResult] {
 	s.exportSessions = append(s.exportSessions, session)
@@ -237,6 +241,13 @@ func TestNativeViewDomainDraft(t *testing.T) {
 	if !v.editing {
 		t.Fatal("editor did not open")
 	}
+	if err := tt.Click("开始测试"); err != nil {
+		t.Fatal(err)
+	}
+	if len(v.controller.(*viewStub).requests) != 0 {
+		t.Fatal("main window started a test while editing")
+	}
+	tt = ui.NewTester(v.domainEditorView, 800, 650)
 	v.draft = "changed.com"
 	tt.Frame()
 	if err := tt.Click("恢复内置"); err != nil {
@@ -285,7 +296,7 @@ func TestNativeViewDomainEditorDisabledWhenClosing(t *testing.T) {
 	v := newNativeView(&viewStub{})
 	v.editDomains()
 	v.draft = "edited.example"
-	tt := ui.NewTester(v.view, 900, 650)
+	tt := ui.NewTester(v.domainEditorView, 900, 650)
 	if err := tt.Click("域名草稿"); err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +320,7 @@ func TestNativeViewDomainSaveFailureAndRetry(t *testing.T) {
 	}
 	v.editDomains()
 	v.draft = "https://example.net/path\ninvalid_thing"
-	tt := ui.NewTester(v.view, 900, 650)
+	tt := ui.NewTester(v.domainEditorView, 900, 650)
 	if err := tt.Click("域名草稿"); err != nil {
 		t.Fatal(err)
 	}
@@ -342,6 +353,78 @@ func TestNativeViewDomainSaveFailureAndRetry(t *testing.T) {
 	tt.Advance(200 * time.Millisecond)
 	if v.editing || len(v.domains) != 1 || v.domains[0] != "example.net" || !strings.Contains(v.message, "忽略 1") {
 		t.Fatalf("save did not apply: %v %q", v.domains, v.message)
+	}
+}
+
+func TestDomainLoadKeepsDraftOnFailureAndCancel(t *testing.T) {
+	v := newNativeView(&viewStub{})
+	v.editDomains()
+	v.draft = "unsaved.example"
+	originalPath := v.loadedDomainPath
+	path := filepath.Join(t.TempDir(), "bad.json")
+	if err := os.WriteFile(path, []byte("invalid json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	open := func(string) ([]string, error) { return []string{path}, nil }
+	confirmed := false
+	confirm := func() (bool, error) { confirmed = true; return false, nil }
+	v.domainDialogOpen = true
+	v.finishDomainLoad(prepareDomainLoad("", true, true, open, confirm))
+	if !confirmed || v.domainDialogOpen || v.draft != "unsaved.example" || v.loadedDomainPath != originalPath {
+		t.Fatal("canceling confirmation changed editor state")
+	}
+	v.domainDialogOpen = true
+	v.finishDomainLoad(prepareDomainLoad(path, false, true, open, func() (bool, error) { return true, nil }))
+	if v.domainDialogOpen || v.draft != "unsaved.example" || v.loadedDomainPath != originalPath || !strings.Contains(v.message, "打开域名配置失败") {
+		t.Fatalf("failed load changed editor state: %+v", v)
+	}
+}
+
+func TestDomainSaveRejectsUnloadedPath(t *testing.T) {
+	s := &viewStub{}
+	v := newNativeView(s)
+	v.editDomains()
+	v.domainPath = "/other/config.json"
+	v.applyDomains()
+	if len(s.savedDomains) != 0 || v.saveDomainsPending != nil || !v.editing {
+		t.Fatal("unloaded path was saved")
+	}
+	v.domainPath = v.loadedDomainPath
+	v.loadedDomainUsable = false
+	v.applyDomains()
+	if len(s.savedDomains) != 0 {
+		t.Fatal("unusable configuration was saved")
+	}
+}
+
+func TestDomainLoadStagesSelectedFile(t *testing.T) {
+	s := &viewStub{}
+	v := newNativeView(s)
+	v.editDomains()
+	path := filepath.Join(t.TempDir(), "domains.json")
+	if err := os.WriteFile(path, []byte(`{"domains":["new.example"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result := prepareDomainLoad("", true, false, func(string) ([]string, error) { return []string{path}, nil }, func() (bool, error) { t.Fatal("unexpected confirmation"); return false, nil })
+	v.finishDomainLoad(result)
+	if v.draft != "new.example" || v.loadedDomainPath != path || v.boot.ConfigPath == path || len(s.savedDomains) != 0 {
+		t.Fatal("selected file was not staged without applying")
+	}
+	v.applyDomains()
+	if len(s.savedDomains) != 1 || s.savedDomains[0][0] != "new.example" {
+		t.Fatal("staged domains not submitted")
+	}
+}
+
+func TestDomainEditorUsesSingleOpenButton(t *testing.T) {
+	v := newNativeView(&viewStub{})
+	v.editDomains()
+	tt := ui.NewTester(v.domainEditorView, 800, 650)
+	if _, ok := tt.Find("打开"); !ok {
+		t.Fatal("open button missing")
+	}
+	if _, ok := tt.Find("加载"); ok {
+		t.Fatal("separate load button is still shown")
 	}
 }
 

@@ -70,7 +70,7 @@ type guiController interface {
 	Sample(sessionID string, since uint64) <-chan result[sampleData]
 	Interfaces() <-chan result[[]tester.InterfaceInfo]
 	OpenLogs() <-chan result[struct{}]
-	SaveDomains([]string) <-chan result[[]string]
+	SaveDomainsAt(string, []string) <-chan result[[]string]
 	Export(sessionID string) <-chan result[tester.ExportResult]
 	Tail(sessionID string) (uint64, error)
 	Shutdown() <-chan struct{}
@@ -117,8 +117,9 @@ func newAppInDirectory(fdInfo syslimit.Info, dir string) *App {
 	builtins := append([]string(nil), tester.BuiltinDomains...)
 	domains, configErr := loadDomainConfig(dir, builtins)
 	logDir, configPath := "", ""
-	if dir != "" && filepath.IsAbs(dir) {
-		logDir, configPath = filepath.Join(dir, "logs"), filepath.Join(dir, "domains.json")
+	if filepath.IsAbs(dir) {
+		logDir = filepath.Join(dir, "logs")
+		configPath, _ = domainConfigPath(dir)
 	} else {
 		dir = ""
 	}
@@ -406,6 +407,13 @@ func (a *App) OpenLogs() <-chan result[struct{}] {
 }
 
 func (a *App) SaveDomains(domains []string) <-chan result[[]string] {
+	a.mu.Lock()
+	path := a.bootstrap.ConfigPath
+	a.mu.Unlock()
+	return a.SaveDomainsAt(path, domains)
+}
+
+func (a *App) SaveDomainsAt(path string, domains []string) <-chan result[[]string] {
 	domains = append([]string(nil), domains...)
 	a.mu.Lock()
 	if a.closing || a.starting || a.saving || a.exporting || (a.engine != nil && !a.engine.Finished()) {
@@ -421,10 +429,23 @@ func (a *App) SaveDomains(domains []string) <-chan result[[]string] {
 	go func() {
 		defer a.jobs.Done()
 		defer close(ch)
-		valid, err := saveDomainConfig(dir, domains, builtins)
+		var valid []string
+		var err error
+		if filepath.Clean(path) == filepath.Join(dir, "domain-config-path.json") {
+			err = errors.New(i18n.T("不能将路径设置文件用作域名配置"))
+		} else {
+			valid, err = saveDomainConfigFile(dir, path, domains, builtins)
+		}
+		configuredPath, preferenceErr := domainConfigPath(dir)
+		if err == nil && (path != configuredPath || preferenceErr != nil) {
+			if e := saveDomainConfigPath(dir, path); e != nil {
+				err = fmt.Errorf(i18n.T("域名已保存，但无法记住配置文件位置: %w"), e)
+			}
+		}
 		a.mu.Lock()
 		if err == nil {
 			a.bootstrap.Domains = append([]string(nil), valid...)
+			a.bootstrap.ConfigPath = path
 			a.bootstrap.ConfigError = ""
 		}
 		a.saving = false
