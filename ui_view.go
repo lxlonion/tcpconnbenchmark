@@ -44,6 +44,7 @@ type nativeView struct {
 	entries                                  []tester.LogEntry
 	filter                                   int
 	follow                                   bool
+	followResumeAt                           time.Time
 	table                                    ui.ListState
 	tableBuilt, scrollRequested, awaitingEnd bool
 	drained                                  bool
@@ -485,6 +486,16 @@ func (v *nativeView) view(c *ui.Context) {
 			}
 		} else if !v.table.AtEnd() {
 			v.follow = false
+			v.followResumeAt = c.Now().Add(5 * time.Second)
+		}
+	}
+	if !v.follow && !v.followResumeAt.IsZero() {
+		if !c.Now().Before(v.followResumeAt) {
+			v.follow = true
+			v.followResumeAt = time.Time{}
+			v.scrollRequested = true
+		} else {
+			c.After(v.followResumeAt.Sub(c.Now()))
 		}
 	}
 	v.poll(c.Now())
@@ -641,10 +652,6 @@ func (v *nativeView) logs(c *ui.Context) {
 		ui.Text(c, i18n.T("实时连接日志")).Bold()
 		ui.Segmented(c.Key("filter"), &v.filter, i18n.T("全部"), i18n.T("成功"), i18n.T("失败"), i18n.T("中止")).Label(i18n.T("日志筛选"))
 		ui.Spacer(c)
-		if ui.Switch(c.Key("follow"), &v.follow).Label(i18n.T("自动跟随")).Changed() && v.follow {
-			v.scrollRequested = true
-		}
-		ui.Text(c, i18n.T("自动跟随"))
 		if ui.Button(c.Key("clear-logs"), i18n.T("清空视图")).Disabled(v.closing).Clicked() {
 			v.clearLogs()
 		}
@@ -657,7 +664,15 @@ func (v *nativeView) logs(c *ui.Context) {
 		v.scrollRequested = false
 		v.awaitingEnd = true
 	}
-	ui.Box(c.Key("log-area")).Grow(1).MinHeight(50).Children(func() {
+	ui.Box(c.Key("log-area")).Grow(1).MinHeight(50).HandleInput(func(ev ui.InputEvent) bool {
+		if ev.Kind == ui.InputScroll && ev.DY != 0 && ev.Mods&ui.Shift == 0 && (ev.DY < 0 || !v.follow) {
+			v.follow = false
+			v.followResumeAt = ev.Time.Add(5 * time.Second)
+			v.scrollRequested = false
+			v.awaitingEnd = false
+		}
+		return false
+	}).Children(func() {
 		ui.Table(c.Key("log-table"), &v.table, logColumns(), len(rows), func(row, col int) {
 			e := rows[row]
 			logCell(c, e, col)

@@ -590,7 +590,7 @@ func TestNativeViewFiltersAndCap(t *testing.T) {
 	}
 }
 
-func TestNativeViewFollowStopsOnScrollAndCanResume(t *testing.T) {
+func TestNativeViewFollowResumesAfterInactivity(t *testing.T) {
 	v := newNativeView(&viewStub{})
 	for i := range 100 {
 		v.entries = append(v.entries, tester.LogEntry{Seq: uint64(i + 1), Domain: fmt.Sprintf("example-%d.com", i)})
@@ -608,11 +608,26 @@ func TestNativeViewFollowStopsOnScrollAndCanResume(t *testing.T) {
 	if v.follow {
 		t.Fatal("scrolling away should disable follow")
 	}
-	if err := tt.Click("自动跟随"); err != nil {
-		t.Fatal(err)
+	if _, ok := tt.Find("自动跟随"); ok {
+		t.Fatal("auto-follow switch should not be shown")
 	}
+	tt.Advance(4 * time.Second)
+	if v.follow {
+		t.Fatal("follow resumed too early")
+	}
+	tt.Scroll(r.X+r.W/2, r.Y+r.H/2, 0, -100)
+	tt.Advance(4 * time.Second)
+	if v.follow {
+		t.Fatal("another upward scroll should reset the timer")
+	}
+	tt.Scroll(r.X+r.W/2, r.Y+r.H/2, 0, 100)
+	tt.Advance(4 * time.Second)
+	if v.follow {
+		t.Fatal("downward scroll should also reset the timer")
+	}
+	tt.Advance(time.Second)
 	if !v.follow || !v.table.AtEnd() {
-		t.Fatalf("enabling follow should return to the end: follow=%v end=%v", v.follow, v.table.AtEnd())
+		t.Fatalf("inactivity should return to the end: follow=%v end=%v", v.follow, v.table.AtEnd())
 	}
 }
 
