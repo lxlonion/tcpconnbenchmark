@@ -1,8 +1,10 @@
-# tcpconnbenchmark
+[English](README.en.md)
+
+# TcpconnBenchmark
 
 <img src="assets/tcpconn-logo.svg" alt="tcpconnbenchmark Logo" width="160">
 
-[English](README.en.md)
+
 
 使用 Go 和 [MyGo Native UI](https://github.com/egoist/mygo) 编写的 TCP 并发连接测试工具，提供图形界面和命令行模式。仅进行 DNS 解析和 TCP 连接，不发送 HTTP 请求或进行 TLS 握手。
 
@@ -14,6 +16,7 @@
 - 按需导出完整连接记录和摘要。
 
 默认测试 360 秒，每秒发起 125 次连接，累计失败 50 次停止；速率可调整为 1–1000 次/秒。
+<img src="assets/截屏1.png" style="zoom: 25%;" ><img src="assets/截屏2.png" style="zoom:25%;" >
 
 ## 构建和运行
 
