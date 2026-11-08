@@ -16,7 +16,7 @@
 - 按需导出完整连接记录和摘要。
 
 默认测试 360 秒，每秒发起 125 次连接，累计失败 50 次停止；速率可调整为 1–1000 次/秒。
-<img src="assets/截屏1.png" style="zoom: 25%;" ><img src="assets/截屏2.png" style="zoom:25%;" >
+<img src="assets/截屏1.png" width="45%;" ><img src="assets/截屏2.png" width="45%;" >
 
 ## 构建和运行
 

@@ -14,7 +14,7 @@ A TCP concurrent connection testing tool written in Go with [MyGo Native UI](htt
 - Export complete connection records and a summary on demand.
 
 Defaults: 360 seconds, 125 connection attempts per second, and a stop threshold of 50 failures. The rate can be set from 1 to 1,000 attempts per second.
-<img src="assets/截屏1.png" style="zoom: 25%;" ><img src="assets/截屏2.png" style="zoom: 25%;" >
+<img src="assets/截屏1.png" width="45%;" ><img src="assets/截屏2.png" width="45%;" >
 
 ## Build and run
 
