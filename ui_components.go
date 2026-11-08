@@ -174,7 +174,20 @@ func (v *nativeView) statusBar(c *ui.Context) {
 	}
 	ui.Row(c.Key("status-bar")).Gap(10).Children(func() {
 		ui.Text(c, fd).Label(i18n.T("文件句柄状态")).Tooltip(full).FontSize(11).TextColor(c.Theme().TextMuted)
-		ui.Spacer(c)
+		if v.message != "" {
+			color := c.Theme().TextMuted
+			if strings.Contains(v.message, "失败") || strings.Contains(v.message, "Failed") {
+				color = c.Theme().Danger
+			}
+			ui.Text(c, v.message).Grow(1).MinWidth(0).TextColor(color).SingleLine().Tooltip(v.message)
+		}
+		if v.boot.ConfigError != "" && v.message != i18n.T("域名配置读取失败：")+v.boot.ConfigError {
+			configError := i18n.T("域名配置读取失败：") + v.boot.ConfigError
+			ui.Text(c, configError).Grow(1).MinWidth(0).TextColor(c.Theme().Danger).SingleLine().Tooltip(configError)
+		}
+		if v.message == "" && v.boot.ConfigError == "" {
+			ui.Spacer(c)
+		}
 		ui.Text(c, v.boot.Version).Label(i18n.T("版本")).Tooltip(v.boot.Version).FontSize(11).TextColor(c.Theme().TextMuted).SingleLine()
 	})
 }

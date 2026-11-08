@@ -334,7 +334,10 @@ func TestPolishedWarningsStayVisible(t *testing.T) {
 	v.snapshot.LogError = "测试记录暂存异常"
 	v.message = "保存结果失败：目录不可写"
 	tt := ui.NewTester(v.view, 900, 650)
-	warnings := []string{"域名配置读取失败：" + v.boot.ConfigError, "日志错误：" + v.snapshot.LogError, v.message, "结果尚未保存，开始新测试或关闭后丢失"}
+	warnings := []string{"域名配置读取失败：" + v.boot.ConfigError, "日志错误：" + v.snapshot.LogError, v.message}
+	if tt.HasText("结果尚未保存，开始新测试或关闭后丢失") {
+		t.Fatal("unsaved warning should not be shown")
+	}
 	for _, label := range warnings {
 		assertInViewport(t, tt, label, 900, 650)
 	}
@@ -349,6 +352,22 @@ func TestPolishedWarningsStayVisible(t *testing.T) {
 	}
 	for _, label := range []string{"应用目录", "域名配置路径", "CSV 日志路径", "摘要文件路径", "文件句柄状态", "版本"} {
 		assertInViewport(t, tt, label, 900, 650)
+	}
+}
+
+func TestStatusMessagesFollowFileLimit(t *testing.T) {
+	for _, message := range []string{"测试已启动", "结果已保存", "保存结果失败：目录不可写"} {
+		for _, width := range []int{900, 1180} {
+			v := polishView("finished")
+			v.message = message
+			tt := ui.NewTester(v.view, width, 650)
+			fd := assertInViewport(t, tt, "文件句柄状态", width, 650)
+			status := assertInViewport(t, tt, message, width, 650)
+			version := assertInViewport(t, tt, "版本", width, 650)
+			if status.X < fd.X+fd.W || status.X+status.W > version.X || math.Abs(float64(status.Y+status.H/2-fd.Y-fd.H/2)) > 2 {
+				t.Fatalf("status not beside file limit: fd=%+v status=%+v version=%+v", fd, status, version)
+			}
+		}
 	}
 }
 

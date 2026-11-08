@@ -481,8 +481,8 @@ func TestNativeViewManualExportAndStaleSample(t *testing.T) {
 	}
 	v.snapshot.Finished = true
 	tt.Frame()
-	if !tt.HasText("结果尚未保存，开始新测试或关闭后丢失") {
-		t.Fatal("missing unsaved warning")
+	if tt.HasText("结果尚未保存，开始新测试或关闭后丢失") {
+		t.Fatal("unsaved warning should not be shown")
 	}
 	if err := tt.Click("保存结果"); err != nil {
 		t.Fatal(err)
@@ -506,6 +506,9 @@ func TestNativeViewManualExportAndStaleSample(t *testing.T) {
 	tt.Advance(200 * time.Millisecond)
 	if v.snapshot.LogPath != "/portable/logs/a.csv" || v.snapshot.SummaryPath == "" {
 		t.Fatal("export paths not applied")
+	}
+	if !tt.HasText("结果已保存") {
+		t.Fatal("saved confirmation should be shown")
 	}
 	if len(s.samples) == 0 {
 		t.Fatal("expected in-flight sample")

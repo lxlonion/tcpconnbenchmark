@@ -686,19 +686,6 @@ func (v *nativeView) footer(c *ui.Context) {
 }
 
 func (v *nativeView) footerContents(c *ui.Context) {
-	if v.message != "" {
-		color := c.Theme().TextMuted
-		if strings.Contains(v.message, "失败") || strings.Contains(v.message, "Failed") {
-			color = c.Theme().Danger
-		}
-		ui.Text(c, v.message).TextColor(color).SingleLine().Tooltip(v.message)
-	}
-	if v.boot.ConfigError != "" && v.message != i18n.T("域名配置读取失败：")+v.boot.ConfigError {
-		ui.Text(c, i18n.T("域名配置读取失败：")+v.boot.ConfigError).TextColor(c.Theme().Danger).SingleLine().Tooltip(v.boot.ConfigError)
-	}
-	if v.session != "" && v.snapshot.Finished && (v.snapshot.LogPath == "" || v.snapshot.SummaryPath == "") {
-		ui.Text(c, i18n.T("结果尚未保存，开始新测试或关闭后丢失")).TextColor(c.Theme().Accent).SingleLine()
-	}
 	ui.Row(c).Children(func() {
 		label := "▸ 导出"
 		if v.detailsOpen {
