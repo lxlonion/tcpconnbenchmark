@@ -48,7 +48,7 @@ func (v *nativeView) lifecycle(t *ui.Theme, reduceMotion bool) lifecycleStyle {
 
 func (v *nativeView) lifecyclePill(c *ui.Context) {
 	s := v.lifecycle(c.Theme(), c.Preferences().ReduceMotion)
-	ui.Row(c.Key("lifecycle")).Gap(7).Padding(6, 10).Radius(20).Background(s.color.Alpha(.10)).Children(func() {
+	ui.Row(c.Key("lifecycle")).Label(s.text).Gap(7).Padding(6, 10).Radius(20).Background(s.color.Alpha(.10)).Children(func() {
 		ui.Box(c).Size(9, 9).Draw(func(p *ui.Painter, r ui.Rect) {
 			alpha := float32(1)
 			if s.pulse {

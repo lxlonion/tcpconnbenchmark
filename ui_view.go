@@ -508,7 +508,6 @@ func (v *nativeView) view(c *ui.Context) {
 	}
 	ui.Column(c).Fill().Padding(14).AlignItems(ui.Center).Children(func() {
 		ui.Column(c.Key("main-content")).Fill().MaxWidth(1280).Gap(8).Children(func() {
-			v.header(c)
 			v.form(c)
 			v.stats(c)
 			v.logs(c)
@@ -517,21 +516,11 @@ func (v *nativeView) view(c *ui.Context) {
 	})
 }
 
-func (v *nativeView) header(c *ui.Context) {
-	ui.Row(c).Height(42).Gap(12).Children(func() {
-		ui.Column(c).Grow(1).Gap(2).Children(func() {
-			ui.Text(c, "tcpconnbenchmark").FontSize(22).Bold()
-			ui.Text(c, i18n.T("TCP 并发连接测试 · 仅握手，不发送 HTTP / TLS 数据")).FontSize(11).TextColor(c.Theme().TextMuted).SingleLine()
-		})
-		v.lifecyclePill(c)
-	})
-}
-
 func (v *nativeView) form(c *ui.Context) {
 	locked := v.locked()
 	ui.Column(c.Key("controls")).Padding(12).Gap(10).Radius(10).Border(1, c.Theme().Border).Children(func() {
 		ui.Row(c).Gap(12).AlignItems(ui.End).Children(func() {
-			ui.Column(c).Width(235).Gap(5).Children(func() {
+			ui.Column(c).AlignItems(ui.Start).Gap(5).Children(func() {
 				ui.Text(c, i18n.T("测试模式")).FontSize(11).TextColor(c.Theme().TextMuted)
 				ui.Segmented(c.Key("mode"), &v.mode, "80 + 443", "80", "443").Height(32).Label(i18n.T("测试模式")).Disabled(locked)
 			})
@@ -544,15 +533,19 @@ func (v *nativeView) form(c *ui.Context) {
 			}
 		})
 		ui.Row(c).Gap(16).AlignItems(ui.End).Children(func() {
+			domainLabel := fmt.Sprintf(i18n.T("域名 %d 个 · 编辑"), len(v.domains))
+			if ui.Button(c.Key("domains"), domainLabel).Label(domainLabel).Height(32).Width(132).Border(1, c.Theme().Border).Disabled(locked).Clicked() {
+				v.editDomains()
+			}
 			ui.Grid(c).Columns(3).Gap(12).Width(444).Children(func() {
 				v.numberField(c, i18n.T("发起速率（次/秒）"), "rate", &v.rate, locked)
 				v.numberField(c, i18n.T("测试时长（秒）"), "duration", &v.duration, locked)
 				v.numberField(c, i18n.T("失败停止（0 不限）"), "fail-stop", &v.failStop, locked)
 			})
 			ui.Spacer(c)
-			if ui.Button(c.Key("domains"), fmt.Sprintf(i18n.T("域名 %d 个 · 编辑"), len(v.domains))).Height(36).Width(132).Border(1, c.Theme().Border).Disabled(locked).Clicked() {
-				v.editDomains()
-			}
+			ui.Box(c).Height(36).Center().Children(func() {
+				v.lifecyclePill(c)
+			})
 			if v.session != "" && !v.snapshot.Finished {
 				if ui.PrimaryButton(c.Key("stop"), i18n.T("停止测试")).Label(i18n.T("停止测试")).Height(36).Width(110).FontSize(14).Bold().Disabled(v.closing || v.stopPending != nil || v.snapshot.Stopping).Clicked() {
 					v.stop()

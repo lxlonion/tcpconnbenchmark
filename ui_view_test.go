@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"image/png"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,11 +75,42 @@ func (*viewStub) Shutdown() <-chan struct{}     { ch := make(chan struct{}); clo
 func TestNativeViewLayoutAndDefaults(t *testing.T) {
 	v := newNativeView(&viewStub{})
 	tt := ui.NewTester(v.view, 1180, 780)
-	for _, label := range []string{"tcpconnbenchmark", "测试模式", "出口网卡", "发起速率（次/秒）", "测试时长（秒）", "失败停止（0 不限）", "连接日志"} {
+	for _, label := range []string{"测试模式", "出口网卡", "发起速率（次/秒）", "测试时长（秒）", "失败停止（0 不限）", "连接日志"} {
 		if _, ok := tt.Find(label); !ok {
 			t.Errorf("missing %q; texts: %v", label, tt.Texts())
 		}
 	}
+	for _, label := range []string{"tcpconnbenchmark", "TCP 并发连接测试 · 仅握手，不发送 HTTP / TLS 数据"} {
+		if tt.HasText(label) {
+			t.Errorf("unexpected heading %q", label)
+		}
+	}
+	for _, size := range [][2]int{{900, 650}, {1180, 780}, {1600, 800}} {
+		tt.SetSize(size[0], size[1])
+		domain := assertInViewport(t, tt, "域名 2 个 · 编辑", size[0], size[1])
+		rate := assertInViewport(t, tt, "发起速率（次/秒）", size[0], size[1])
+		status := assertInViewport(t, tt, "空闲", size[0], size[1])
+		start := assertInViewport(t, tt, "开始测试", size[0], size[1])
+		if domain.X+domain.W > rate.X || status.X+status.W > start.X || domain.Y < start.Y || domain.Y+domain.H > start.Y+start.H {
+			t.Fatalf("unexpected control positions: domain=%+v rate=%+v status=%+v start=%+v", domain, rate, status, start)
+		}
+		if math.Abs(float64(domain.Y-(rate.Y+rate.H+5))) > .5 || domain.H != 32 || math.Abs(float64(status.Y+status.H/2-start.Y-start.H/2)) > .5 {
+			t.Fatalf("controls not vertically aligned: domain=%+v rate=%+v status=%+v start=%+v", domain, rate, status, start)
+		}
+		picker := assertInViewport(t, tt, "选择出口网卡", size[0], size[1])
+		last := assertInViewport(t, tt, "443", size[0], size[1])
+		if picker.X-(last.X+last.W) > 45 {
+			t.Fatalf("excess empty space after mode options: picker=%+v last=%+v", picker, last)
+		}
+		for i, label := range []string{"80 + 443", "80", "443"} {
+			r := assertInViewport(t, tt, label, size[0], size[1])
+			tt.ClickAt(r.X+r.W/2, r.Y+r.H/2)
+			if v.mode != i {
+				t.Fatalf("mode %q selected %d, want %d", label, v.mode, i)
+			}
+		}
+	}
+	v.mode = 0
 	if v.rate != "125" || v.duration != "360" || v.failStop != "50" || v.mode != 0 || !v.follow {
 		t.Fatalf("wrong defaults: %#v", v)
 	}
