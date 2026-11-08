@@ -85,7 +85,7 @@ func TestPlistAndSafeBranchFlags(t *testing.T) {
 	if strings.Contains(flags, dev.Branch) || !strings.Contains(flags, "tcpconnbenchmark/internal/buildinfo.branchHex=666561747572652f612662") || !strings.HasPrefix(flags, "-s -w ") {
 		t.Fatalf("unsafe linker flags: %q", flags)
 	}
-	for _, want := range []string{"<string>tcpconnbenchmark</string>", "<string>app.tcpconnbenchmark.desktop</string>", "<key>tcpconnbenchmarkBuildLabel</key>", "<key>CFBundleIconFile</key>\n\t<string>tcpconn.icns</string>"} {
+	for _, want := range []string{"<key>CFBundleDisplayName</key>\n\t<string>TcpConn</string>", "<key>CFBundleName</key>\n\t<string>TcpConn</string>", "<key>CFBundleExecutable</key>\n\t<string>tcpconnbenchmark</string>", "<string>app.tcpconnbenchmark.desktop</string>", "<key>tcpconnbenchmarkBuildLabel</key>", "<key>CFBundleIconFile</key>\n\t<string>tcpconn.icns</string>"} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("development plist missing %q", want)
 		}

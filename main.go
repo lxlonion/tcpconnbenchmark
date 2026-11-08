@@ -85,7 +85,7 @@ func main() {
 
 	app := newApp(fdInfo)
 	if err := app.run(); err != nil {
-		fmt.Fprintf(os.Stderr, i18n.T("tcpconnbenchmark 启动失败: %v\n"), err)
+		fmt.Fprintf(os.Stderr, i18n.T("TcpConn 启动失败: %v\n"), err)
 		os.Exit(1)
 	}
 }

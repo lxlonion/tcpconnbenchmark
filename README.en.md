@@ -75,3 +75,16 @@ On Windows, replace `./tcpconnbenchmark` with `.\tcpconnbenchmark.exe`. The exam
 CGO_ENABLED=0 go test ./...
 CGO_ENABLED=0 go vet ./...
 ```
+
+## Language
+
+The interface and command-line messages support Simplified Chinese and English.
+The application checks `LC_ALL`, then `LC_MESSAGES`, then `LANG` and uses the
+first nonempty value. English locales (for example `en_US.UTF-8`) select English;
+all other or unset locales fall back to Chinese. To override the language when
+launching from a terminal:
+
+```sh
+LC_ALL=en_US.UTF-8 ./tcpconnbenchmark
+LC_ALL=zh_CN.UTF-8 ./tcpconnbenchmark -cli
+```

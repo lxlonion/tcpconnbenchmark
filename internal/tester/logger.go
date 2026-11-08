@@ -331,7 +331,7 @@ func (l *resultLogger) exportCSV(src io.Reader, dst io.Writer, expected uint64) 
 
 func (l *resultLogger) summary(snap Snapshot, paths ExportResult) string {
 	var b strings.Builder
-	b.WriteString(i18n.T("tcpconnbenchmark · TCP 并发连接测试\n========================================\n"))
+	b.WriteString(i18n.T("TcpConn · TCP 并发连接测试\n========================================\n"))
 	fmt.Fprintf(&b, i18n.T("会话 ID: %s\n状态: %s\n开始时间: %s\n结束时间: %s\n"), l.sessionID, snap.StopReason, l.createdAt.Format("2006-01-02 15:04:05"), snap.EndedAt)
 	fmt.Fprintf(&b, i18n.T("测试模式: %s\n出口网卡: %s\n测试域名: %d 个\n发起目标: %d 个（域名 × 端口）\n测试时长: %d 秒\n"), ModeLabel(l.config.Mode), l.ifaceLabel, len(l.config.Domains), len(l.config.Domains)*len(modePorts(l.config.Mode)), l.config.DurationSec)
 	if l.config.FailStop > 0 {

@@ -144,7 +144,7 @@ func (a *App) run() error {
 	view := newNativeView(a)
 	mygo.App.WhenReady(func() {
 		win := mygo.NewWindow(mygo.WindowOptions{
-			Title: i18n.T("tcpconnbenchmark · TCP 并发连接测试"), Width: 900, Height: 800,
+			Title: i18n.T("TcpConn · TCP 并发连接测试"), Width: 900, Height: 800,
 			MinWidth: 900, MinHeight: 650, Content: ui.View(view.view),
 		})
 		view.attach(win)

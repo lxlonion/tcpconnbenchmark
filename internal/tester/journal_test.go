@@ -76,7 +76,7 @@ func TestSnapshotAndSummarySessionMetadata(t *testing.T) {
 		} else if e.logger.fdInfo.Error != "" {
 			fdLine = fmt.Sprintf("文件句柄上限: %s\n", e.logger.fdInfo.Error)
 		}
-		wantSummary := fmt.Sprintf("tcpconnbenchmark · TCP 并发连接测试\n========================================\n"+
+		wantSummary := fmt.Sprintf("TcpConn · TCP 并发连接测试\n========================================\n"+
 			"会话 ID: %s\n状态: 预先停止\n开始时间: %s\n结束时间: %s\n"+
 			"测试模式: TCP 80 + 443\n出口网卡: %s\n测试域名: 4 个\n发起目标: 8 个（域名 × 端口）\n测试时长: 1 秒\n"+
 			"失败停止: 不限制\n发起速率: 100 次/秒\n单连接保持: 至本轮测试结束或对端关闭\n%s"+

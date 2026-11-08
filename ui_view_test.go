@@ -80,7 +80,7 @@ func TestNativeViewLayoutAndDefaults(t *testing.T) {
 			t.Errorf("missing %q; texts: %v", label, tt.Texts())
 		}
 	}
-	for _, label := range []string{"tcpconnbenchmark", "TCP 并发连接测试 · 仅握手，不发送 HTTP / TLS 数据"} {
+	for _, label := range []string{"TcpConn", "TCP 并发连接测试 · 仅握手，不发送 HTTP / TLS 数据"} {
 		if tt.HasText(label) {
 			t.Errorf("unexpected heading %q", label)
 		}

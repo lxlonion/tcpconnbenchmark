@@ -27,7 +27,7 @@ func runCLIEngine(engine engine, save bool) error {
 	}()
 
 	snap := engine.Snapshot()
-	fmt.Println(i18n.T("tcpconnbenchmark · TCP 并发连接测试（CLI）"))
+	fmt.Println(i18n.T("TcpConn · TCP 并发连接测试（CLI）"))
 	fmt.Printf(i18n.T("模式: %s　出口网卡: %s　域名: %d 个\n"), snap.ModeLabel, snap.InterfaceLabel, snap.DomainCount)
 	fmt.Printf(i18n.T("时长: %d 秒　失败停止: %s　发起速率: %d 次/秒\n"), snap.DurationSec, failStopLabel(snap.FailStop), snap.RatePerSec)
 	fmt.Println(i18n.T("按 Ctrl+C 可提前停止；正在建立连接…"))
