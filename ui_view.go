@@ -46,7 +46,8 @@ type nativeView struct {
 	follow                                   bool
 	followResumeAt                           time.Time
 	table                                    ui.ListState
-	tableBuilt, scrollRequested, awaitingEnd bool
+	tableBuilt, tableHasRows                 bool
+	scrollRequested, awaitingEnd             bool
 	drained                                  bool
 	nextSampleAt                             time.Time
 	startPending                             <-chan result[tester.Snapshot]
@@ -214,6 +215,10 @@ func (v *nativeView) poll(now time.Time) {
 				v.exported = tester.ExportResult{}
 				v.entries = nil
 				v.logsCleared = false
+				v.follow = true
+				v.followResumeAt = time.Time{}
+				v.scrollRequested = true
+				v.awaitingEnd = false
 				v.since = 0
 				v.drained = false
 				v.nextSampleAt = time.Time{}
@@ -479,7 +484,7 @@ func (v *nativeView) exportResults() {
 
 func (v *nativeView) view(c *ui.Context) {
 	// AtEnd describes the last laid-out table, before fresh rows are appended.
-	if v.follow && v.tableBuilt && !v.scrollRequested {
+	if v.follow && v.tableBuilt && v.tableHasRows && !v.scrollRequested {
 		if v.awaitingEnd {
 			if v.table.AtEnd() {
 				v.awaitingEnd = false
@@ -489,7 +494,13 @@ func (v *nativeView) view(c *ui.Context) {
 			v.followResumeAt = c.Now().Add(5 * time.Second)
 		}
 	}
-	if !v.follow && !v.followResumeAt.IsZero() {
+	v.poll(c.Now())
+	if v.session == "" || v.snapshot.Finished {
+		v.followResumeAt = time.Time{}
+	} else if !v.follow {
+		if v.followResumeAt.IsZero() {
+			v.followResumeAt = c.Now().Add(5 * time.Second)
+		}
 		if !c.Now().Before(v.followResumeAt) {
 			v.follow = true
 			v.followResumeAt = time.Time{}
@@ -498,7 +509,6 @@ func (v *nativeView) view(c *ui.Context) {
 			c.After(v.followResumeAt.Sub(c.Now()))
 		}
 	}
-	v.poll(c.Now())
 	if v.needsWake() {
 		delay := 200 * time.Millisecond
 		if v.session != "" && !v.drained && v.samplePending == nil && v.nextSampleAt.After(c.Now()) {
@@ -660,7 +670,9 @@ func (v *nativeView) logs(c *ui.Context) {
 	ui.Box(c.Key("log-area")).Grow(1).MinHeight(50).HandleInput(func(ev ui.InputEvent) bool {
 		if ev.Kind == ui.InputScroll && ev.DY != 0 && ev.Mods&ui.Shift == 0 && (ev.DY < 0 || !v.follow) {
 			v.follow = false
-			v.followResumeAt = ev.Time.Add(5 * time.Second)
+			if v.session != "" && !v.snapshot.Finished {
+				v.followResumeAt = ev.Time.Add(5 * time.Second)
+			}
 			v.scrollRequested = false
 			v.awaitingEnd = false
 		}
@@ -677,6 +689,7 @@ func (v *nativeView) logs(c *ui.Context) {
 		}
 	})
 	v.tableBuilt = true
+	v.tableHasRows = len(rows) > 0
 }
 
 func (v *nativeView) footer(c *ui.Context) {

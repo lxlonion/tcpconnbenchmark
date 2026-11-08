@@ -627,6 +627,8 @@ func TestNativeViewFiltersAndCap(t *testing.T) {
 
 func TestNativeViewFollowResumesAfterInactivity(t *testing.T) {
 	v := newNativeView(&viewStub{})
+	v.session = "s"
+	v.drained = true
 	for i := range 100 {
 		v.entries = append(v.entries, tester.LogEntry{Seq: uint64(i + 1), Domain: fmt.Sprintf("example-%d.com", i)})
 	}
@@ -663,6 +665,90 @@ func TestNativeViewFollowResumesAfterInactivity(t *testing.T) {
 	tt.Advance(time.Second)
 	if !v.follow || !v.table.AtEnd() {
 		t.Fatalf("inactivity should return to the end: follow=%v end=%v", v.follow, v.table.AtEnd())
+	}
+}
+
+func TestNativeViewNewTestImmediatelyFollowsLogs(t *testing.T) {
+	s := &viewStub{}
+	v := newNativeView(s)
+	tt := ui.NewTester(v.view, 900, 650)
+	tt.Frame()
+	if !v.follow {
+		t.Fatal("empty log should not disable follow")
+	}
+	// A previous test may have been left scrolled away from the end.
+	v.session, v.snapshot.Finished, v.drained = "previous", true, true
+	for i := range 100 {
+		v.entries = append(v.entries, tester.LogEntry{Seq: uint64(i + 1)})
+	}
+	v.scrollRequested = true
+	tt.Frame()
+	r, _ := tt.Find("连接日志")
+	tt.Scroll(r.X+r.W/2, r.Y+r.H/2, 0, -220)
+	if v.follow {
+		t.Fatal("scrolling up should pause follow")
+	}
+	if err := tt.Click("开始测试"); err != nil {
+		t.Fatal(err)
+	}
+	s.start <- result[tester.Snapshot]{Value: tester.Snapshot{SessionID: "new"}}
+	tt.Advance(200 * time.Millisecond)
+	if !v.follow || !v.followResumeAt.IsZero() {
+		t.Fatal("starting a new test should immediately restore follow")
+	}
+	logs := make([]tester.LogEntry, 100)
+	for i := range logs {
+		logs[i].Seq = uint64(i + 1)
+	}
+	s.samples[0] <- result[sampleData]{Value: sampleData{State: tester.Snapshot{SessionID: "new"}, Logs: logs, NextSeq: 100}}
+	tt.Advance(200 * time.Millisecond)
+	if !v.follow || !v.table.AtEnd() {
+		t.Fatal("new logs should be followed immediately")
+	}
+}
+
+func TestNativeViewFollowDoesNotResumeOutsideRunningTest(t *testing.T) {
+	for _, finished := range []bool{false, true} {
+		v := newNativeView(&viewStub{})
+		if finished {
+			v.session = "s"
+			v.snapshot.Finished = true
+			v.drained = true
+		}
+		for i := range 100 {
+			v.entries = append(v.entries, tester.LogEntry{Seq: uint64(i + 1)})
+		}
+		v.scrollRequested = true
+		tt := ui.NewTester(v.view, 900, 650)
+		r, ok := tt.Find("连接日志")
+		if !ok {
+			t.Fatal("missing log table")
+		}
+		tt.Scroll(r.X+r.W/2, r.Y+r.H/2, 0, -220)
+		tt.Advance(10 * time.Second)
+		tt.Frame()
+		if v.follow || v.table.AtEnd() {
+			t.Fatalf("follow resumed while not running (finished=%v)", finished)
+		}
+	}
+}
+
+func TestNativeViewFollowTimerCanceledWhenTestFinishes(t *testing.T) {
+	v := newNativeView(&viewStub{})
+	v.session, v.drained = "s", true
+	for i := range 100 {
+		v.entries = append(v.entries, tester.LogEntry{Seq: uint64(i + 1)})
+	}
+	v.scrollRequested = true
+	tt := ui.NewTester(v.view, 900, 650)
+	r, _ := tt.Find("连接日志")
+	tt.Scroll(r.X+r.W/2, r.Y+r.H/2, 0, -220)
+	tt.Advance(4 * time.Second)
+	v.snapshot.Finished = true
+	tt.Frame()
+	tt.Advance(6 * time.Second)
+	if v.follow || v.table.AtEnd() {
+		t.Fatal("follow resumed after the test finished")
 	}
 }
 
