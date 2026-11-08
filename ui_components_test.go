@@ -72,7 +72,7 @@ func TestPolishedStateLayouts(t *testing.T) {
 							t.Fatalf("both KPI groups shown: %s", label)
 						}
 					}
-					for _, label := range []string{"发起速率（次/秒）", "测试时长（秒）", "失败停止（0 不限）", "日志", "文件句柄状态", "版本", "连接日志"} {
+					for _, label := range []string{"发起速率（次/秒）", "测试时长（秒）", "失败停止（0 不限）", "导出", "文件句柄状态", "版本", "连接日志"} {
 						assertInViewport(t, tt, label, size[0], size[1])
 					}
 					// Numeric inputs stay compact and equal-width even in wide windows.
@@ -131,7 +131,7 @@ func TestPolishedPathsCollapsedAndOneClickCopy(t *testing.T) {
 			t.Fatalf("path visible while collapsed: %s", label)
 		}
 	}
-	if err := tt.Click("日志"); err != nil {
+	if err := tt.Click("导出"); err != nil {
 		t.Fatal(err)
 	}
 	for _, label := range []string{"打开目录", "保存结果"} {
@@ -146,7 +146,7 @@ func TestPolishedPathsCollapsedAndOneClickCopy(t *testing.T) {
 			t.Fatalf("wrong clipboard for %s", p.label)
 		}
 	}
-	if err := tt.Click("日志"); err != nil {
+	if err := tt.Click("导出"); err != nil {
 		t.Fatal(err)
 	}
 	for _, label := range []string{"CSV 日志路径", "打开目录", "保存结果"} {
@@ -167,7 +167,7 @@ func TestContentWidthIsCappedAndCentered(t *testing.T) {
 		if math.Abs(float64(contentWidth-want)) > .5 || math.Abs(float64(first.X-(float32(width)-want)/2)) > .5 {
 			t.Fatalf("content not capped/centered at %d: first=%+v last=%+v", width, first, last)
 		}
-		if err := tt.Click("日志"); err != nil {
+		if err := tt.Click("导出"); err != nil {
 			t.Fatal(err)
 		}
 		for _, label := range []string{"打开目录", "保存结果", "CSV 日志路径", "文件句柄状态", "连接日志"} {
@@ -341,7 +341,7 @@ func TestPolishedWarningsStayVisible(t *testing.T) {
 	if v.detailsOpen {
 		t.Fatal("warnings should not need expanded paths")
 	}
-	if err := tt.Click("日志"); err != nil {
+	if err := tt.Click("导出"); err != nil {
 		t.Fatal(err)
 	}
 	for _, label := range warnings {

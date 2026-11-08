@@ -707,11 +707,11 @@ func (v *nativeView) footerContents(c *ui.Context) {
 		ui.Text(c, i18n.T("结果尚未保存，开始新测试或关闭后丢失")).TextColor(c.Theme().Accent).SingleLine()
 	}
 	ui.Row(c).Children(func() {
-		label := "▸ 日志"
+		label := "▸ 导出"
 		if v.detailsOpen {
-			label = "▾ 日志"
+			label = "▾ 导出"
 		}
-		if ui.Button(c.Key("storage-details"), i18n.T(label)).Label(i18n.T("日志")).Tooltip(i18n.T("展开或收起日志路径与结果操作")).Clicked() {
+		if ui.Button(c.Key("storage-details"), i18n.T(label)).Label(i18n.T("导出")).Tooltip(i18n.T("展开或收起日志路径与结果操作")).Clicked() {
 			v.detailsOpen = !v.detailsOpen
 		}
 	})
