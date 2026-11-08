@@ -12,6 +12,37 @@ import (
 	"time"
 )
 
+func TestAutomaticRoutingUsesIPv4Only(t *testing.T) {
+	for _, name := range []string{"", "auto"} {
+		t.Run("interface="+name, func(t *testing.T) {
+			cfg := baseConfig()
+			cfg.Interface = name
+			e := newTestEngine(t, cfg)
+			if e.resolver.network != "ip4" {
+				t.Fatalf("DNS network = %q, want ip4", e.resolver.network)
+			}
+			e.resolver.lookupIP = func(context.Context, string) ([]net.IP, error) {
+				return []net.IP{net.ParseIP("2001:db8::1"), net.ParseIP("192.0.2.1")}, nil
+			}
+			for i := 0; i < 2; i++ {
+				ip, err := e.resolver.lookup(context.Background(), "dual.example")
+				if err != nil || !ip.Equal(net.ParseIP("192.0.2.1")) {
+					t.Fatalf("lookup = %v, %v; want IPv4", ip, err)
+				}
+			}
+			if _, err := e.resolver.lookup(context.Background(), "2001:db8::1"); err == nil {
+				t.Fatal("IPv6 literal should be rejected in automatic mode")
+			}
+			e.resolver.lookupIP = func(context.Context, string) ([]net.IP, error) {
+				return []net.IP{net.ParseIP("2001:db8::1")}, nil
+			}
+			if _, err := e.resolver.lookup(context.Background(), "ipv6-only.example"); err == nil {
+				t.Fatal("IPv6-only result should be rejected in automatic mode")
+			}
+		})
+	}
+}
+
 func TestDNSLookupCoalescesConcurrentRequests(t *testing.T) {
 	r := newDNSResolver()
 	var calls atomic.Int32

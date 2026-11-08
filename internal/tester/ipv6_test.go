@@ -198,6 +198,13 @@ func TestIPv6LoopbackDialAndLog(t *testing.T) {
 		cfg.Domains = []string{"::1"}
 		e := newTestEngine(t, cfg)
 		conn, _, err := e.connect(target{domain: "::1", port: listener.Addr().(*net.TCPAddr).Port})
+		if iface == "" {
+			if err == nil {
+				conn.Close()
+				t.Fatal("automatic routing allowed an IPv6 connection")
+			}
+			continue
+		}
 		if err != nil {
 			t.Fatalf("IPv6 connect interface %q: %v", iface, err)
 		}

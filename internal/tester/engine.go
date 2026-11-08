@@ -262,6 +262,9 @@ func New(cfg Config) (*Engine, error) {
 	}
 	if iface != nil {
 		e.resolver.sourceCheck = e.checkSource
+	} else {
+		// Automatic routing is an IPv4-only test, including DNS lookups.
+		e.resolver.network = "ip4"
 	}
 	for _, domain := range domains {
 		for _, port := range ports {
@@ -725,6 +728,7 @@ func (r *logRing) since(seq uint64, limit int) ([]LogEntry, bool) {
 
 type dnsResolver struct {
 	mu          sync.Mutex
+	network     string
 	cache       map[string]*dnsCacheEntry
 	inflight    map[string]*dnsCall
 	lookupIP    func(context.Context, string) ([]net.IP, error)
@@ -732,6 +736,9 @@ type dnsResolver struct {
 }
 
 func (r *dnsResolver) checkIP(ip net.IP) error {
+	if r.network == "ip4" && ip.To4() == nil {
+		return errors.New(i18n.T("目标 IP 地址族与所选源地址不匹配"))
+	}
 	if ip.To4() == nil && ip.To16() == nil {
 		return errors.New(i18n.T("目标 IP 地址族与所选源地址不匹配"))
 	}
@@ -755,13 +762,15 @@ type dnsCall struct {
 }
 
 func newDNSResolver() *dnsResolver {
-	return &dnsResolver{
+	r := &dnsResolver{
 		cache:    make(map[string]*dnsCacheEntry),
 		inflight: make(map[string]*dnsCall),
-		lookupIP: func(ctx context.Context, host string) ([]net.IP, error) {
-			return net.DefaultResolver.LookupIP(ctx, "ip", host)
-		},
+		network:  "ip",
 	}
+	r.lookupIP = func(ctx context.Context, host string) ([]net.IP, error) {
+		return net.DefaultResolver.LookupIP(ctx, r.network, host)
+	}
+	return r
 }
 
 func (r *dnsResolver) lookup(ctx context.Context, host string) (net.IP, error) {
