@@ -16,6 +16,10 @@ func runCLI(cfg tester.Config, save bool) error {
 	if err != nil {
 		return fmt.Errorf(i18n.T("启动测试失败: %w"), err)
 	}
+	return runCLIEngine(engine, save)
+}
+
+func runCLIEngine(engine engine, save bool) error {
 	defer func() {
 		if err := engine.Discard(); err != nil {
 			fmt.Fprintf(os.Stderr, i18n.T("清理测试暂存失败: %v\n"), err)
@@ -68,7 +72,7 @@ func runCLI(cfg tester.Config, save bool) error {
 		snap.Attempts, snap.Success, snap.Failed, snap.Aborted, successRate)
 	fmt.Printf(i18n.T("峰值并发: %d　平均发起: %.1f 次/秒\n"), snap.Max, snap.AvgRate)
 	if snap.LogError != "" {
-		fmt.Fprintf(os.Stderr, i18n.T("日志错误: %s\n"), snap.LogError)
+		return fmt.Errorf(i18n.T("日志错误: %s"), snap.LogError)
 	}
 	if !save {
 		fmt.Println(i18n.T("日志未导出；可使用 -save 显式保存。"))

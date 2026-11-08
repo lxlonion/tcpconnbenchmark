@@ -245,3 +245,43 @@ func TestCustomSwitchPreferenceFailureRetry(t *testing.T) {
 		t.Fatalf("restart after custom retry: %+v", b)
 	}
 }
+
+func TestWriteFileAtomicReplacesAndCleansUp(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	for _, data := range []string{"first", "replacement"} {
+		if err := writeFileAtomic(path, []byte(data)); err != nil {
+			t.Fatal(err)
+		}
+		got, err := os.ReadFile(path)
+		if err != nil || string(got) != data {
+			t.Fatalf("contents = %q, error = %v", got, err)
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) != 1 || entries[0].Name() != "config.json" {
+			t.Fatalf("temporary file remains: %v, %v", entries, err)
+		}
+	}
+}
+
+func TestWriteFileAtomicFailurePreservesDestination(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "existing")
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(path, "keep.txt")
+	if err := os.WriteFile(sentinel, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomic(path, []byte("replacement")); err == nil {
+		t.Fatal("replacement of a nonempty directory succeeded")
+	}
+	if got, err := os.ReadFile(sentinel); err != nil || string(got) != "keep" {
+		t.Fatalf("destination changed: %q, %v", got, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "existing" {
+		t.Fatalf("temporary file remains: %v, %v", entries, err)
+	}
+}

@@ -24,6 +24,14 @@ const (
 	MaxRatePerSec = 1000
 	// DefaultDurationSec is the default test duration in the GUI and CLI.
 	DefaultDurationSec = 360
+	// MaxDurationSec bounds the configurable test duration.
+	MaxDurationSec = 86400
+	// DefaultFailStop is the default cumulative failure threshold; zero disables it.
+	DefaultFailStop = 50
+	// MaxFailStop bounds the configurable failure threshold.
+	MaxFailStop = 10_000_000
+	// MaxDomains bounds the number of normalized, distinct test hosts.
+	MaxDomains = 5000
 	// DialTimeout bounds one TCP handshake.
 	DialTimeout = 5 * time.Second
 	// DNSLookupTimeout bounds one name resolution.
@@ -169,10 +177,7 @@ type Engine struct {
 	dialing   atomic.Int64
 	maxActive atomic.Int64
 
-	connMu  sync.Mutex
-	conns   map[uint64]net.Conn
-	connSeq atomic.Uint64
-	wg      sync.WaitGroup
+	wg sync.WaitGroup
 
 	resolver *dnsResolver
 }
@@ -185,13 +190,13 @@ func New(cfg Config) (*Engine, error) {
 	if len(ports) == 0 {
 		return nil, errors.New(i18n.T("测试模式无效，请选择 TCP 80、TCP 443 或 TCP 80 + 443"))
 	}
-	if cfg.DurationSec < 1 || cfg.DurationSec > 86400 {
-		return nil, errors.New(i18n.T("测试时长需在 1 到 86400 秒之间"))
+	if cfg.DurationSec < 1 || cfg.DurationSec > MaxDurationSec {
+		return nil, fmt.Errorf(i18n.T("测试时长需在 1 到 %d 秒之间"), MaxDurationSec)
 	}
 	if cfg.FailStop < 0 {
 		return nil, errors.New(i18n.T("失败停止次数不能为负数"))
 	}
-	if cfg.FailStop > 10_000_000 {
+	if cfg.FailStop > MaxFailStop {
 		return nil, errors.New(i18n.T("失败停止次数过大"))
 	}
 	if cfg.RatePerSec < MinRatePerSec || cfg.RatePerSec > MaxRatePerSec {
@@ -200,10 +205,6 @@ func New(cfg Config) (*Engine, error) {
 	if len(cfg.Domains) == 0 {
 		return nil, errors.New(i18n.T("请至少填写一个测试域名"))
 	}
-	if len(cfg.Domains) > 5000 {
-		return nil, errors.New(i18n.T("测试域名不能超过 5000 个"))
-	}
-
 	domains, invalid := NormalizeDomains(cfg.Domains)
 	if len(invalid) > 0 {
 		shown := invalid
@@ -218,6 +219,9 @@ func New(cfg Config) (*Engine, error) {
 	}
 	if len(domains) == 0 {
 		return nil, errors.New(i18n.T("请至少填写一个有效的测试域名"))
+	}
+	if len(domains) > MaxDomains {
+		return nil, fmt.Errorf(i18n.T("测试域名不能超过 %d 个"), MaxDomains)
 	}
 	cfg.Domains = domains
 
@@ -257,7 +261,6 @@ func New(cfg Config) (*Engine, error) {
 		logger:   logger,
 		ring:     newLogRing(4096),
 		done:     make(chan struct{}),
-		conns:    make(map[uint64]net.Conn),
 		resolver: newDNSResolver(),
 	}
 	if iface != nil {
@@ -437,7 +440,6 @@ func (e *Engine) run() {
 
 func (e *Engine) finish() {
 	e.cancel()
-	e.closeAllConnections()
 	e.wg.Wait()
 
 	e.endedAt.Store(time.Now().UnixNano())
@@ -625,31 +627,21 @@ func (e *Engine) incrementActive() {
 }
 
 func (e *Engine) hold(conn net.Conn) {
-	id := e.connSeq.Add(1)
-	e.connMu.Lock()
-	e.conns[id] = conn
-	e.connMu.Unlock()
-
-	<-e.ctx.Done()
+	// A blocked read observes remote EOF/reset without sending application data.
+	// Cancellation closes the socket to release that read, even if hold starts
+	// after the context was canceled. No per-connection timer or watcher is needed.
+	stopClose := context.AfterFunc(e.ctx, func() { _ = conn.Close() })
+	defer stopClose()
+	var buf [256]byte
+	for e.ctx.Err() == nil {
+		if _, err := conn.Read(buf[:]); err != nil {
+			break
+		}
+	}
 
 	_ = conn.Close()
-	e.connMu.Lock()
-	delete(e.conns, id)
-	e.connMu.Unlock()
 	e.active.Add(-1)
 	e.closed.Add(1)
-}
-
-func (e *Engine) closeAllConnections() {
-	e.connMu.Lock()
-	conns := make([]net.Conn, 0, len(e.conns))
-	for _, conn := range e.conns {
-		conns = append(conns, conn)
-	}
-	e.connMu.Unlock()
-	for _, conn := range conns {
-		_ = conn.Close()
-	}
 }
 
 func truncateRunes(s string, max int) string {

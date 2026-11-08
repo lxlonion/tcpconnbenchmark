@@ -6,6 +6,7 @@
 /tcplink
 /logs/
 /domains.json
+/domain-config-path.json
 
 # tooling / screenshots
 /.openchamber/

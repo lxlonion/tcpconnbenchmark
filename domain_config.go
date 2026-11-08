@@ -24,8 +24,8 @@ func normalizeConfigDomains(domains []string) ([]string, error) {
 	if len(invalid) != 0 {
 		return nil, fmt.Errorf(i18n.T("存在无效域名：%s"), invalid[0])
 	}
-	if len(valid) == 0 || len(valid) > 5000 {
-		return nil, errors.New(i18n.T("有效域名须为 1–5000 个"))
+	if len(valid) == 0 || len(valid) > tester.MaxDomains {
+		return nil, fmt.Errorf(i18n.T("有效域名须为 1–%d 个"), tester.MaxDomains)
 	}
 	return valid, nil
 }
@@ -98,24 +98,7 @@ func saveDomainConfigFile(dir, path string, domains, builtins []string) ([]strin
 		return nil, fmt.Errorf(i18n.T("编码域名配置失败: %w"), err)
 	}
 	data = append(data, '\n')
-	f, err := os.CreateTemp(filepath.Dir(path), ".domains-*.tmp")
-	if err != nil {
-		return nil, fmt.Errorf(i18n.T("创建域名配置临时文件失败: %w"), err)
-	}
-	tmp := f.Name()
-	defer os.Remove(tmp)
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return nil, fmt.Errorf(i18n.T("写入域名配置失败: %w"), err)
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return nil, fmt.Errorf(i18n.T("同步域名配置失败: %w"), err)
-	}
-	if err := f.Close(); err != nil {
-		return nil, fmt.Errorf(i18n.T("关闭域名配置失败: %w"), err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
+	if err := writeFileAtomic(path, data); err != nil {
 		return nil, fmt.Errorf(i18n.T("保存域名配置失败: %w"), err)
 	}
 	return valid, nil
@@ -147,21 +130,28 @@ func saveDomainConfigPath(dir, path string) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(dir, ".domain-path-*.tmp")
+	return writeFileAtomic(filepath.Join(dir, "domain-config-path.json"), data)
+}
+
+// writeFileAtomic stages a replacement beside its destination so Rename stays
+// on the same filesystem. Failed writes leave the destination untouched.
+func writeFileAtomic(path string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".config-*.tmp")
 	if err != nil {
 		return err
 	}
-	defer os.Remove(f.Name())
-	if _, err = f.Write(data); err != nil {
+	defer func() {
 		_ = f.Close()
+		_ = os.Remove(f.Name())
+	}()
+	if _, err = f.Write(data); err != nil {
 		return err
 	}
 	if err = f.Sync(); err != nil {
-		_ = f.Close()
 		return err
 	}
 	if err = f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), filepath.Join(dir, "domain-config-path.json"))
+	return os.Rename(f.Name(), path)
 }

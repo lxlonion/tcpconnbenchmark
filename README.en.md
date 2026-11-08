@@ -10,7 +10,7 @@ A TCP concurrent connection testing tool written in Go with [MyGo Native UI](htt
 
 - Test TCP ports 80, 443, or both, with live connection statistics and logs.
 - Select an outbound interface or IPv4 / IPv6 source address; use custom domains, URLs, or IP addresses.
-- Configure duration, connection rate, and failure threshold. Successful connections remain open until the test ends.
+- Configure duration, connection rate, and failure threshold. Successful connections remain open until the test ends or the peer closes.
 - Export complete connection records and a summary on demand.
 
 Defaults: 360 seconds, 125 connection attempts per second, and a stop threshold of 50 failures. The rate can be set from 1 to 1,000 attempts per second.
@@ -65,6 +65,8 @@ On Windows, replace `./tcpconnbenchmark` with `.\tcpconnbenchmark.exe`. The exam
 - Custom domains are stored in `domains.json` next to the executable; for a macOS `.app`, they are stored next to the bundle.
 - Results are not exported by default. Use “Save results” in the GUI or `-save` in the CLI to write `results.csv` and `summary.txt` under `logs/` in the portable directory. Unsaved results are lost when starting a new test or exiting.
 - Success rate is successes divided by successes plus failures; connections aborted on stop are excluded.
+- Success counts record TCP handshake outcomes. Peer closure reduces active connections and increases closed connections without changing handshake successes. No application requests are sent; unsolicited peer data is discarded to detect closure.
+- CLI log-staging failures produce a nonzero exit status, with or without `-save`.
 - High-rate or long tests can exhaust file handles or trigger target firewalls and rate limits. Test only within your authorization and the capacity of your machine and targets.
 
 ## Development

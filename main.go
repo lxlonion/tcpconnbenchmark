@@ -21,7 +21,7 @@ func main() {
 	cliMode := flag.Bool("cli", false, i18n.T("不启动图形界面，直接在终端运行测试"))
 	modeFlag := flag.String("mode", "both", i18n.T("测试模式: 80, 443, both"))
 	duration := flag.Int("duration", tester.DefaultDurationSec, i18n.T("测试时长（秒）"))
-	failStop := flag.Int("fail-stop", 50, i18n.T("累计失败多少次后停止，0 表示不限制"))
+	failStop := flag.Int("fail-stop", tester.DefaultFailStop, i18n.T("累计失败多少次后停止，0 表示不限制"))
 	rate := flag.Int("rate", tester.DefaultRatePerSec, i18n.T("每秒发起连接次数"))
 	iface := flag.String("iface", "", i18n.T("出口网卡名称，例如 en0；留空使用系统默认路由"))
 	sourceIP := flag.String("source-ip", "", i18n.T("源 IPv4 / IPv6 地址，需同时指定 -iface；留空自动匹配"))

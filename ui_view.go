@@ -38,31 +38,31 @@ type nativeView struct {
 	detailsOpen                                     bool
 	logsCleared                                     bool
 
-	snapshot                                 tester.Snapshot
-	session                                  string
-	generation, logEpoch, since              uint64
-	entries                                  []tester.LogEntry
-	filter                                   int
-	follow                                   bool
-	followResumeAt                           time.Time
-	table                                    ui.ListState
-	tableBuilt, tableHasRows                 bool
-	scrollRequested, awaitingEnd             bool
-	drained                                  bool
-	nextSampleAt                             time.Time
-	startPending                             <-chan result[tester.Snapshot]
-	stopPending                              <-chan result[struct{}]
-	samplePending                            <-chan result[sampleData]
-	sampleGeneration, sampleEpoch            uint64
-	sampleSession                            string
-	interfacesPending                        <-chan result[[]tester.InterfaceInfo]
-	openPending                              <-chan result[struct{}]
-	saveDomainsPending                       <-chan result[[]string]
-	saveDomainsIgnored                       int
-	exportPending                            <-chan result[tester.ExportResult]
-	exportGeneration                         uint64
-	exportSession                            string
-	exported                                 tester.ExportResult
+	snapshot                      tester.Snapshot
+	session                       string
+	generation, logEpoch, since   uint64
+	entries                       []tester.LogEntry
+	filter                        int
+	follow                        bool
+	followResumeAt                time.Time
+	table                         ui.ListState
+	tableBuilt, tableHasRows      bool
+	scrollRequested, awaitingEnd  bool
+	drained                       bool
+	nextSampleAt                  time.Time
+	startPending                  <-chan result[tester.Snapshot]
+	stopPending                   <-chan result[struct{}]
+	samplePending                 <-chan result[sampleData]
+	sampleGeneration, sampleEpoch uint64
+	sampleSession                 string
+	interfacesPending             <-chan result[[]tester.InterfaceInfo]
+	openPending                   <-chan result[struct{}]
+	saveDomainsPending            <-chan result[[]string]
+	saveDomainsIgnored            int
+	exportPending                 <-chan result[tester.ExportResult]
+	exportGeneration              uint64
+	exportSession                 string
+	exported                      tester.ExportResult
 }
 
 func newNativeView(controller guiController) *nativeView {
@@ -115,10 +115,10 @@ func (v *nativeView) start() {
 		return
 	}
 	r, okR := parseInteger(v.rate, v.boot.MinRatePerSec, v.boot.MaxRatePerSec)
-	d, okD := parseInteger(v.duration, 1, 86400)
-	f, okF := parseInteger(v.failStop, 0, 10000000)
-	if !okR || !okD || !okF || len(v.domains) < 1 || len(v.domains) > 5000 {
-		v.message = fmt.Sprintf(i18n.T("请输入有效整数：速率 %d–%d、时长 1–86400、失败停止 0–10000000；域名须为 1–5000 个"), v.boot.MinRatePerSec, v.boot.MaxRatePerSec)
+	d, okD := parseInteger(v.duration, 1, tester.MaxDurationSec)
+	f, okF := parseInteger(v.failStop, 0, tester.MaxFailStop)
+	if !okR || !okD || !okF || len(v.domains) < 1 || len(v.domains) > tester.MaxDomains {
+		v.message = fmt.Sprintf(i18n.T("请输入有效整数：速率 %d–%d、时长 1–%d、失败停止 0–%d；域名须为 1–%d 个"), v.boot.MinRatePerSec, v.boot.MaxRatePerSec, tester.MaxDurationSec, tester.MaxFailStop, tester.MaxDomains)
 		return
 	}
 	modes := []tester.Mode{tester.ModeBoth, tester.Mode80, tester.Mode443}
@@ -460,8 +460,8 @@ func (v *nativeView) applyDomains() {
 		return
 	}
 	valid, invalid := tester.NormalizeDomains([]string{v.draft})
-	if len(valid) < 1 || len(valid) > 5000 {
-		v.message = i18n.T("有效域名须为 1–5000 个")
+	if len(valid) < 1 || len(valid) > tester.MaxDomains {
+		v.message = fmt.Sprintf(i18n.T("有效域名须为 1–%d 个"), tester.MaxDomains)
 		return
 	}
 	v.saveDomainsIgnored = len(invalid)
@@ -587,7 +587,7 @@ func (v *nativeView) domainEditor(c *ui.Context) {
 			v.loadDomainPath(v.domainPath, true)
 		}
 	})
-	ui.Text(c, fmt.Sprintf(i18n.T("有效 %d 个 · 无效 %d 个（最多 5000 个）"), len(valid), len(invalid)))
+	ui.Text(c, fmt.Sprintf(i18n.T("有效 %d 个 · 无效 %d 个（最多 %d 个）"), len(valid), len(invalid), tester.MaxDomains))
 	if len(invalid) > 0 {
 		ui.Text(c, i18n.T("无效：")+strings.Join(invalid[:min(3, len(invalid))], "、")).SingleLine()
 	}
@@ -608,7 +608,7 @@ func (v *nativeView) domainEditor(c *ui.Context) {
 		if v.saveDomainsPending != nil {
 			label = "正在保存…"
 		}
-		if ui.PrimaryButton(c.Key("domain-apply"), i18n.T(label)).Disabled(locked || v.domainPath != v.loadedDomainPath || !v.loadedDomainUsable || len(valid) == 0 || len(valid) > 5000).Clicked() {
+		if ui.PrimaryButton(c.Key("domain-apply"), i18n.T(label)).Disabled(locked || v.domainPath != v.loadedDomainPath || !v.loadedDomainUsable || len(valid) == 0 || len(valid) > tester.MaxDomains).Clicked() {
 			v.applyDomains()
 		}
 	})
@@ -620,10 +620,10 @@ func (v *nativeView) domainEditor(c *ui.Context) {
 func (v *nativeView) stats(c *ui.Context) {
 	s := v.snapshot
 	if v.session == "" {
-		if duration, ok := parseInteger(v.duration, 1, 86400); ok {
+		if duration, ok := parseInteger(v.duration, 1, tester.MaxDurationSec); ok {
 			s.DurationSec, s.Remaining = duration, float64(duration)
 		}
-		if failStop, ok := parseInteger(v.failStop, 0, 10000000); ok {
+		if failStop, ok := parseInteger(v.failStop, 0, tester.MaxFailStop); ok {
 			s.FailStop = failStop
 		}
 	}

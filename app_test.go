@@ -60,12 +60,38 @@ func validRequest() startRequest {
 	return startRequest{Mode: tester.Mode80, Domains: []string{"127.0.0.1"}, DurationSec: 30, RatePerSec: 50}
 }
 
+func TestAsyncResultCoordinatesShutdownWithoutReceiver(t *testing.T) {
+	a := testApp(t)
+	if !a.registerJob() {
+		t.Fatal("could not register job")
+	}
+	release := make(chan struct{})
+	wantErr := errors.New("job error")
+	ch := asyncResult(a, func() (int, error) {
+		<-release
+		return 42, wantErr
+	})
+	done := a.Shutdown()
+	select {
+	case <-done:
+		t.Fatal("shutdown finished before the registered job")
+	default:
+	}
+	close(release)
+	// An unread result must not prevent the job or shutdown from completing.
+	waitClosed(t, done)
+	r := getResult(t, ch)
+	if r.Value != 42 || !errors.Is(r.Err, wantErr) {
+		t.Fatalf("unexpected result: %+v", r)
+	}
+}
+
 func TestBootstrapDefaultsAndDeepCopy(t *testing.T) {
 	a := testApp(t)
 	// Make nested address ownership deterministic even on hosts with no interfaces.
 	a.bootstrap.Interfaces = []tester.InterfaceInfo{{Name: "test", IPv4: []string{"192.0.2.1"}, IPv6: []string{"2001:db8::1"}}}
 	b := a.Bootstrap()
-	if b.DefaultDurationSec != tester.DefaultDurationSec || b.DefaultFailStop != defaultGUIFailStop || b.DefaultRatePerSec != tester.DefaultRatePerSec {
+	if b.DefaultDurationSec != tester.DefaultDurationSec || b.DefaultFailStop != tester.DefaultFailStop || b.DefaultRatePerSec != tester.DefaultRatePerSec {
 		t.Fatalf("unexpected defaults: %+v", b)
 	}
 	if len(b.Domains) == 0 {

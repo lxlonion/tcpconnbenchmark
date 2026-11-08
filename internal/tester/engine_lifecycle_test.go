@@ -243,6 +243,98 @@ func TestSuccessfulRunClosesConnectionsAndLogsAllAttempts(t *testing.T) {
 	}
 }
 
+func TestPeerCloseUpdatesLiveConcurrency(t *testing.T) {
+	ln := acceptingListener(t)
+	e := newTestEngine(t, baseConfig())
+	target := target{domain: "127.0.0.1", port: ln.Addr().(*net.TCPAddr).Port}
+	for i := 1; i <= 3; i++ {
+		done := make(chan struct{})
+		e.wg.Add(1)
+		go func() {
+			defer close(done)
+			defer e.wg.Done()
+			e.attempt(target)
+		}()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("attempt did not return after the peer closed its socket")
+		}
+		snap := e.Snapshot()
+		if snap.Active != 0 || snap.Closed != uint64(i) || snap.Success != uint64(i) || snap.Max != 1 || snap.Failed != 0 || snap.Aborted != 0 || snap.Finished {
+			t.Fatalf("after peer close %d: %+v", i, snap)
+		}
+	}
+	e.finish()
+	if rows := readResultCSV(t, exportTestResult(t, e).LogPath); len(rows) != 3 || countResult(rows)["success"] != 3 {
+		t.Fatalf("peer closure changed handshake results: %v", rows)
+	}
+}
+
+func TestHoldAfterCancellationClosesSocket(t *testing.T) {
+	e := newTestEngine(t, baseConfig())
+	conn, peer := net.Pipe()
+	defer peer.Close()
+	e.cancel()
+	e.incrementActive()
+	done := make(chan struct{})
+	e.wg.Add(1)
+	go func() {
+		defer close(done)
+		defer e.wg.Done()
+		e.hold(conn)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("hold blocked after cancellation")
+	}
+	if snap := e.Snapshot(); snap.Active != 0 || snap.Closed != 1 {
+		t.Fatalf("incorrect counters after cancellation: %+v", snap)
+	}
+}
+
+func TestHoldDiscardsUnsolicitedData(t *testing.T) {
+	e := newTestEngine(t, baseConfig())
+	conn, peer := net.Pipe()
+	defer peer.Close()
+	e.incrementActive()
+	done := make(chan struct{})
+	e.wg.Add(1)
+	go func() {
+		defer close(done)
+		defer e.wg.Done()
+		e.hold(conn)
+	}()
+	written := make(chan error, 1)
+	go func() {
+		_, err := peer.Write([]byte(strings.Repeat("server banner", 100)))
+		written <- err
+	}()
+	select {
+	case err := <-written:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("unsolicited data was not drained")
+	}
+	select {
+	case <-done:
+		t.Fatal("data alone closed the connection")
+	default:
+	}
+	if snap := e.Snapshot(); snap.Active != 1 || snap.Closed != 0 {
+		t.Fatalf("incorrect live counters: %+v", snap)
+	}
+	e.cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("cancellation did not release the socket read")
+	}
+}
+
 func TestFirstAttemptStartsImmediately(t *testing.T) {
 	e := newTestEngine(t, Config{
 		Mode:        Mode80,

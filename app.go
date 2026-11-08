@@ -19,10 +19,7 @@ import (
 	"tcpconnbenchmark/internal/tester"
 )
 
-const (
-	defaultGUIFailStop = 50
-	liveLogCapacity    = 600
-)
+const liveLogCapacity = 600
 
 type bootstrapData struct {
 	Domains            []string
@@ -41,15 +38,7 @@ type bootstrapData struct {
 	Version            string
 }
 
-type startRequest struct {
-	Mode        tester.Mode
-	Interface   string
-	SourceIP    string
-	Domains     []string
-	DurationSec int
-	FailStop    int
-	RatePerSec  int
-}
+type startRequest = tester.Config
 
 type result[T any] struct {
 	Value T
@@ -143,7 +132,7 @@ func newAppInDirectory(fdInfo syslimit.Info, dir string) *App {
 			FDLimit:            fdInfo,
 			DefaultRatePerSec:  tester.DefaultRatePerSec,
 			DefaultDurationSec: tester.DefaultDurationSec,
-			DefaultFailStop:    defaultGUIFailStop,
+			DefaultFailStop:    tester.DefaultFailStop,
 			MinRatePerSec:      tester.MinRatePerSec,
 			MaxRatePerSec:      tester.MaxRatePerSec,
 			Version:            buildinfo.Label(),
@@ -204,6 +193,19 @@ func reply[T any](value T, err error) <-chan result[T] {
 	return ch
 }
 
+// asyncResult runs work already registered with a.jobs. Callers must register
+// under a.mu before releasing it, so Shutdown cannot miss an in-flight job.
+func asyncResult[T any](a *App, job func() (T, error)) <-chan result[T] {
+	ch := make(chan result[T], 1)
+	go func() {
+		defer a.jobs.Done()
+		defer close(ch)
+		value, err := job()
+		ch <- result[T]{Value: value, Err: err}
+	}()
+	return ch
+}
+
 func (a *App) Start(req startRequest) <-chan result[tester.Snapshot] {
 	req.Domains = append([]string(nil), req.Domains...)
 	a.mu.Lock()
@@ -219,20 +221,13 @@ func (a *App) Start(req startRequest) <-chan result[tester.Snapshot] {
 	a.jobs.Add(1)
 	a.mu.Unlock()
 
-	ch := make(chan result[tester.Snapshot], 1)
-	go func() {
-		defer a.jobs.Done()
-		defer close(ch)
-		e, err := a.newEngine(tester.Config{
-			Mode: req.Mode, Interface: req.Interface, SourceIP: req.SourceIP, Domains: req.Domains,
-			DurationSec: req.DurationSec, FailStop: req.FailStop, RatePerSec: req.RatePerSec,
-		})
+	return asyncResult(a, func() (tester.Snapshot, error) {
+		e, err := a.newEngine(req)
 		if err != nil {
 			a.mu.Lock()
 			a.starting = false
 			a.mu.Unlock()
-			ch <- result[tester.Snapshot]{Err: err}
-			return
+			return tester.Snapshot{}, err
 		}
 		a.mu.Lock()
 		old := a.engine
@@ -255,8 +250,7 @@ func (a *App) Start(req startRequest) <-chan result[tester.Snapshot] {
 				if cleanupErr != nil {
 					startErr = errors.Join(startErr, fmt.Errorf(i18n.T("清理候选测试暂存失败，将在关闭时重试: %w"), cleanupErr))
 				}
-				ch <- result[tester.Snapshot]{Err: startErr}
-				return
+				return tester.Snapshot{}, startErr
 			}
 		}
 		// Serialize startup with Shutdown's closing flag. If shutdown already
@@ -276,9 +270,8 @@ func (a *App) Start(req startRequest) <-chan result[tester.Snapshot] {
 		if closing {
 			e.Stop(i18n.T("程序关闭"))
 		}
-		ch <- result[tester.Snapshot]{Value: snap}
-	}()
-	return ch
+		return snap, nil
+	})
 }
 
 // sessionJob captures an engine and registers its work atomically with shutdown.
@@ -306,16 +299,12 @@ func (a *App) Stop(sessionID string) <-chan result[struct{}] {
 	if err != nil {
 		return reply(struct{}{}, err)
 	}
-	ch := make(chan result[struct{}], 1)
-	go func() {
-		defer a.jobs.Done()
-		defer close(ch)
+	return asyncResult(a, func() (struct{}, error) {
 		if !e.Finished() {
 			e.Stop(i18n.T("手动停止"))
 		}
-		ch <- result[struct{}]{}
-	}()
-	return ch
+		return struct{}{}, nil
+	})
 }
 
 func (a *App) Sample(sessionID string, since uint64) <-chan result[sampleData] {
@@ -323,10 +312,7 @@ func (a *App) Sample(sessionID string, since uint64) <-chan result[sampleData] {
 	if err != nil {
 		return reply(sampleData{}, err)
 	}
-	ch := make(chan result[sampleData], 1)
-	go func() {
-		defer a.jobs.Done()
-		defer close(ch)
+	return asyncResult(a, func() (sampleData, error) {
 		snap := e.Snapshot()
 		limit := 400
 		if since == 0 {
@@ -339,9 +325,8 @@ func (a *App) Sample(sessionID string, since uint64) <-chan result[sampleData] {
 				next = entry.Seq
 			}
 		}
-		ch <- result[sampleData]{Value: sampleData{State: snap, Logs: logs, Dropped: dropped, NextSeq: next}}
-	}()
-	return ch
+		return sampleData{State: snap, Logs: logs, Dropped: dropped, NextSeq: next}, nil
+	})
 }
 
 func (a *App) Tail(sessionID string) (uint64, error) {
@@ -371,23 +356,16 @@ func (a *App) Interfaces() <-chan result[[]tester.InterfaceInfo] {
 	if !a.registerJob() {
 		return reply([]tester.InterfaceInfo(nil), errors.New(i18n.T("程序正在关闭")))
 	}
-	ch := make(chan result[[]tester.InterfaceInfo], 1)
-	go func() {
-		defer a.jobs.Done()
-		defer close(ch)
-		ch <- result[[]tester.InterfaceInfo]{Value: tester.ListInterfaces()}
-	}()
-	return ch
+	return asyncResult(a, func() ([]tester.InterfaceInfo, error) {
+		return tester.ListInterfaces(), nil
+	})
 }
 
 func (a *App) OpenLogs() <-chan result[struct{}] {
 	if !a.registerJob() {
 		return reply(struct{}{}, errors.New(i18n.T("程序正在关闭")))
 	}
-	ch := make(chan result[struct{}], 1)
-	go func() {
-		defer a.jobs.Done()
-		defer close(ch)
+	return asyncResult(a, func() (struct{}, error) {
 		dir := a.bootstrap.LogDir
 		var err error
 		if dir == "" {
@@ -401,9 +379,8 @@ func (a *App) OpenLogs() <-chan result[struct{}] {
 				err = fmt.Errorf(i18n.T("打开日志目录失败: %w"), err)
 			}
 		}
-		ch <- result[struct{}]{Err: err}
-	}()
-	return ch
+		return struct{}{}, err
+	})
 }
 
 func (a *App) SaveDomains(domains []string) <-chan result[[]string] {
@@ -425,10 +402,7 @@ func (a *App) SaveDomainsAt(path string, domains []string) <-chan result[[]strin
 	dir := a.bootstrap.AppDir
 	builtins := append([]string(nil), a.bootstrap.BuiltinDomains...)
 	a.mu.Unlock()
-	ch := make(chan result[[]string], 1)
-	go func() {
-		defer a.jobs.Done()
-		defer close(ch)
+	return asyncResult(a, func() ([]string, error) {
 		var valid []string
 		var err error
 		if filepath.Clean(path) == filepath.Join(dir, "domain-config-path.json") {
@@ -450,9 +424,8 @@ func (a *App) SaveDomainsAt(path string, domains []string) <-chan result[[]strin
 		}
 		a.saving = false
 		a.mu.Unlock()
-		ch <- result[[]string]{Value: valid, Err: err}
-	}()
-	return ch
+		return valid, err
+	})
 }
 
 func (a *App) Export(sessionID string) <-chan result[tester.ExportResult] {
@@ -461,10 +434,7 @@ func (a *App) Export(sessionID string) <-chan result[tester.ExportResult] {
 		return reply(tester.ExportResult{}, err)
 	}
 	dir := a.bootstrap.LogDir
-	ch := make(chan result[tester.ExportResult], 1)
-	go func() {
-		defer a.jobs.Done()
-		defer close(ch)
+	return asyncResult(a, func() (tester.ExportResult, error) {
 		var value tester.ExportResult
 		var err error
 		if dir == "" {
@@ -477,9 +447,8 @@ func (a *App) Export(sessionID string) <-chan result[tester.ExportResult] {
 		a.mu.Lock()
 		a.exporting = false
 		a.mu.Unlock()
-		ch <- result[tester.ExportResult]{Value: value, Err: err}
-	}()
-	return ch
+		return value, err
+	})
 }
 
 func (a *App) Shutdown() <-chan struct{} {

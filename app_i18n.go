@@ -23,7 +23,7 @@ func init() {
 		"清理当前测试暂存失败: %v\n":              "Failed to clean up current test's temporary files: %v\n",
 		"清理候选测试暂存失败: %v\n":              "Failed to clean up candidate test's temporary files: %v\n",
 		"存在无效域名：%s":                     "Invalid domain: %s",
-		"有效域名须为 1–5000 个":               "There must be 1–5000 valid domains",
+		"有效域名须为 1–%d 个":                 "There must be 1–%d valid domains",
 		"应用目录不可用，无法读取域名配置":              "Application directory is unavailable; cannot read domain configuration",
 		"读取域名配置失败: %w":                  "Failed to read domain configuration: %w",
 		"域名配置超过大小限制":                    "Domain configuration exceeds the size limit",
@@ -33,10 +33,6 @@ func init() {
 		"内置域名无效: %w":                    "Invalid built-in domains: %w",
 		"删除自定义域名配置失败: %w":               "Failed to delete custom domain configuration: %w",
 		"编码域名配置失败: %w":                  "Failed to encode domain configuration: %w",
-		"创建域名配置临时文件失败: %w":              "Failed to create temporary domain configuration file: %w",
-		"写入域名配置失败: %w":                  "Failed to write domain configuration: %w",
-		"同步域名配置失败: %w":                  "Failed to sync domain configuration: %w",
-		"关闭域名配置失败: %w":                  "Failed to close domain configuration: %w",
 		"保存域名配置失败: %w":                  "Failed to save domain configuration: %w",
 	})
 }

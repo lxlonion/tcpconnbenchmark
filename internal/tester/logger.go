@@ -339,7 +339,7 @@ func (l *resultLogger) summary(snap Snapshot, paths ExportResult) string {
 	} else {
 		b.WriteString(i18n.T("失败停止: 不限制\n"))
 	}
-	fmt.Fprintf(&b, i18n.T("发起速率: %d 次/秒\n单连接保持: 至本轮测试结束\n"), l.config.RatePerSec)
+	fmt.Fprintf(&b, i18n.T("发起速率: %d 次/秒\n单连接保持: 至本轮测试结束或对端关闭\n"), l.config.RatePerSec)
 	if l.fdInfo.Supported {
 		fmt.Fprintf(&b, i18n.T("文件句柄软上限: %d（硬上限 %d）\n"), l.fdInfo.Soft, l.fdInfo.Hard)
 	} else if l.fdInfo.Error != "" {

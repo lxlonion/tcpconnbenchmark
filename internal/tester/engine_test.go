@@ -1,6 +1,7 @@
 package tester
 
 import (
+	"fmt"
 	"net"
 	"reflect"
 	"strings"
@@ -223,4 +224,47 @@ func TestNewRejectsInvalidRate(t *testing.T) {
 	if _, err := New(base); err == nil {
 		t.Fatal("过大的 rate 应被拒绝")
 	}
+}
+
+func TestNewChecksNormalizedDomainCount(t *testing.T) {
+	domains := make([]string, MaxDomains+1)
+	for i := range domains {
+		domains[i] = fmt.Sprintf("host-%d.example", i)
+	}
+	for _, separator := range []string{",", "\n"} {
+		t.Run(fmt.Sprintf("separator=%q", separator), func(t *testing.T) {
+			cfg := baseConfig()
+			cfg.Domains = []string{strings.Join(domains, separator)}
+			e, err := New(cfg)
+			if err == nil {
+				e.Stop("测试清理")
+				e.Start()
+				e.Wait()
+				_ = e.Discard()
+				t.Fatal("more than MaxDomains normalized domains were accepted")
+			}
+			if !strings.Contains(err.Error(), "5000") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+	t.Run("boundary", func(t *testing.T) {
+		cfg := baseConfig()
+		cfg.Domains = []string{strings.Join(domains[:MaxDomains], ",")}
+		e := newTestEngine(t, cfg)
+		if got := e.Snapshot().DomainCount; got != MaxDomains {
+			t.Fatalf("DomainCount = %d, want %d", got, MaxDomains)
+		}
+	})
+	t.Run("duplicates", func(t *testing.T) {
+		cfg := baseConfig()
+		cfg.Domains = make([]string, MaxDomains+1)
+		for i := range cfg.Domains {
+			cfg.Domains[i] = "EXAMPLE.com"
+		}
+		e := newTestEngine(t, cfg)
+		if got := e.Snapshot().DomainCount; got != 1 {
+			t.Fatalf("DomainCount = %d, want 1", got)
+		}
+	})
 }
