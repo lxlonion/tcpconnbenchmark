@@ -110,7 +110,7 @@ func logCell(c *ui.Context, e tester.LogEntry, col int) {
 		return
 	}
 	cells := []string{strconv.FormatUint(e.Seq, 10), e.Time, status, e.Domain, e.IP, strconv.Itoa(e.Port), fmt.Sprintf("%.1f ms", e.LatencyMS), e.Error}
-	text := ui.Text(c, cells[col]).SingleLine().FontSize(12).Tooltip(cells[col])
+	text := ui.Text(c, cells[col]).SingleLine().FontSize(12)
 	if col != 3 && col != 7 {
 		text.Font("monospace").FontFeatures("tnum").TextColor(c.Theme().TextMuted)
 	}
