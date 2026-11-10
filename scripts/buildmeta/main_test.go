@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"debug/elf"
 	"debug/pe"
+	"encoding/xml"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -76,24 +78,80 @@ func TestPlistAndSafeBranchFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	template = bytes.ReplaceAll(template, []byte("\r\n"), []byte("\n"))
+	for _, tc := range []struct {
+		name     string
+		template []byte
+	}{
+		{"LF", template},
+		{"CRLF", bytes.ReplaceAll(template, []byte("\n"), []byte("\r\n"))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testPlistAndSafeBranchFlags(t, tc.template)
+		})
+	}
+}
+
+func testPlistAndSafeBranchFlags(t *testing.T, template []byte) {
+	t.Helper()
 	dev := buildinfo.Metadata{Branch: "feature/a&b", Revision: "0123456", Dirty: true}
 	data, err := plist(template, dev)
-	if err != nil || strings.Contains(string(data), "CFBundleShortVersionString") || !strings.Contains(string(data), "feature/a&amp;b@0123456+dirty") || strings.Contains(string(data), "1.0.0") {
-		t.Fatalf("development plist: %s (%v)", data, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := plistText(t, data)
+	if strings.Contains(got, "CFBundleShortVersionString") || !strings.Contains(got, "feature/a&amp;b@0123456+dirty") || strings.Contains(got, "1.0.0") {
+		t.Fatalf("development plist: %s", data)
 	}
 	flags := linkerFlags("-s -w", dev)
 	if strings.Contains(flags, dev.Branch) || !strings.Contains(flags, "tcpconnbenchmark/internal/buildinfo.branchHex=666561747572652f612662") || !strings.HasPrefix(flags, "-s -w ") {
 		t.Fatalf("unsafe linker flags: %q", flags)
 	}
-	for _, want := range []string{"<key>CFBundleDisplayName</key>\n\t<string>TcpConn</string>", "<key>CFBundleName</key>\n\t<string>TcpConn</string>", "<key>CFBundleExecutable</key>\n\t<string>tcpconnbenchmark</string>", "<string>app.tcpconnbenchmark.desktop</string>", "<key>tcpconnbenchmarkBuildLabel</key>", "<key>CFBundleIconFile</key>\n\t<string>tcpconn.icns</string>"} {
-		if !strings.Contains(string(data), want) {
+	for _, want := range []string{"<key>CFBundleDisplayName</key>\n\t<string>TcpConn</string>", "<key>CFBundleName</key>\n\t<string>TcpConn</string>", "<key>CFBundleExecutable</key>\n\t<string>tcpconnbenchmark</string>", "<key>CFBundleIdentifier</key>\n\t<string>app.tcpconnbenchmark.desktop</string>", "<key>tcpconnbenchmarkBuildLabel</key>\n\t<string>feature/a&amp;b@0123456+dirty</string>", "<key>CFBundleIconFile</key>\n\t<string>tcpconn.icns</string>"} {
+		if !strings.Contains(got, want) {
 			t.Errorf("development plist missing %q", want)
 		}
 	}
 	data, err = plist(template, buildinfo.Metadata{Revision: "0123456", Release: "v1.2.3+build.1"})
-	if err != nil || !strings.Contains(string(data), "<key>CFBundleShortVersionString</key>\n\t<string>1.2.3</string>") || !strings.Contains(string(data), "v1.2.3+build.1") {
-		t.Fatalf("release plist: %s (%v)", data, err)
+	if err != nil {
+		t.Fatal(err)
 	}
+	got = plistText(t, data)
+	if !strings.Contains(got, "<key>CFBundleShortVersionString</key>\n\t<string>1.2.3</string>") || !strings.Contains(got, "v1.2.3+build.1") {
+		t.Fatalf("release plist: %s", data)
+	}
+}
+
+// plistText validates the XML before normalizing only checkout-dependent CRLF.
+func plistText(t *testing.T, data []byte) string {
+	t.Helper()
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	var document struct {
+		XMLName xml.Name  `xml:"plist"`
+		Dict    *struct{} `xml:"dict"`
+	}
+	if err := decoder.Decode(&document); err != nil {
+		t.Fatalf("invalid plist XML: %v", err)
+	}
+	if document.Dict == nil {
+		t.Fatal("plist missing dict")
+	}
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("invalid trailing plist XML: %v", err)
+		}
+		if _, ok := token.(xml.Comment); ok {
+			continue
+		}
+		if text, ok := token.(xml.CharData); !ok || len(bytes.TrimSpace(text)) != 0 {
+			t.Fatalf("unexpected content after plist: %v", token)
+		}
+	}
+	return strings.ReplaceAll(string(data), "\r\n", "\n")
 }
 
 // makeFixture uses a tiny local app so these tests never overwrite the user's

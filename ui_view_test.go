@@ -38,7 +38,8 @@ func (s *viewStub) Bootstrap() bootstrapData {
 	if maxRate == 0 {
 		maxRate = tester.MaxRatePerSec
 	}
-	return bootstrapData{Domains: []string{"example.com", "example.org"}, BuiltinDomains: []string{"builtin.example"}, AppDir: "/portable", LogDir: "/portable/logs", ConfigPath: "/portable/domains.json", ConfigError: s.configError, DefaultRatePerSec: 125, DefaultDurationSec: 360, DefaultFailStop: 50, MinRatePerSec: minRate, MaxRatePerSec: maxRate, Version: "test"}
+	const appDir = "/portable"
+	return bootstrapData{Domains: []string{"example.com", "example.org"}, BuiltinDomains: []string{"builtin.example"}, AppDir: appDir, LogDir: filepath.Join(appDir, "logs"), ConfigPath: filepath.Join(appDir, "domains.json"), ConfigError: s.configError, DefaultRatePerSec: 125, DefaultDurationSec: 360, DefaultFailStop: 50, MinRatePerSec: minRate, MaxRatePerSec: maxRate, Version: "test"}
 }
 func (s *viewStub) Start(r startRequest) <-chan result[tester.Snapshot] {
 	s.requests = append(s.requests, r)
@@ -351,6 +352,9 @@ func TestNativeViewDomainSaveFailureAndRetry(t *testing.T) {
 		t.Fatal("configuration error not shown")
 	}
 	v.editDomains()
+	if !v.loadedDomainUsable {
+		t.Fatalf("default config cannot be repaired: AppDir=%q ConfigPath=%q", v.boot.AppDir, v.boot.ConfigPath)
+	}
 	v.draft = "https://example.net/path\ninvalid_thing"
 	tt := ui.NewTester(v.domainEditorView, 900, 650)
 	if err := tt.Click("域名草稿"); err != nil {
